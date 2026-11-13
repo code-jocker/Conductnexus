@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --line: #e2e8f0;
+  --text: #172033;
+  --muted: #64748b;
+  --sidebar: #0b1b33;
+}
+
+.dark {
+  color-scheme: dark;
+  --surface: #101a2c;
+  --surface-2: #0c1524;
+  --line: #1f2f49;
+  --text: #e6edf7;
+  --muted: #93a4bd;
+  --sidebar: #081426;
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-canvas text-ink antialiased dark:bg-[#081426] dark:text-slate-100;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+  ::selection {
+    @apply bg-brand-200 text-navy-900;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-display tracking-tight;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500/60 ring-offset-2 ring-offset-white dark:ring-offset-[#081426];
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-300 dark:bg-slate-700;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .surface {
+    @apply rounded-xl2 border border-line bg-white shadow-card dark:border-[#1f2f49] dark:bg-[#101a2c];
+  }
+  .surface-muted {
+    @apply rounded-xl border border-line bg-slate-50 dark:border-[#1f2f49] dark:bg-[#0c1524];
+  }
+  .input {
+    @apply h-10 w-full rounded-lg border border-line bg-white px-3 text-sm text-ink placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-[#26374f] dark:bg-[#0c1524] dark:text-slate-100 dark:placeholder:text-slate-500;
+  }
+  .textarea {
+    @apply min-h-[96px] w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-[#26374f] dark:bg-[#0c1524] dark:text-slate-100;
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-line px-2.5 py-0.5 text-xs font-medium dark:border-[#26374f];
+  }
+  .nav-link {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-300/90 transition hover:bg-white/10 hover:text-white;
+  }
+  .nav-link-active {
+    @apply bg-white/10 text-white shadow-inner;
+  }
+  .table-wrap {
+    @apply w-full overflow-x-auto;
+  }
+  .th {
+    @apply whitespace-nowrap px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400;
+  }
+  .td {
+    @apply whitespace-nowrap px-4 py-3 text-sm text-slate-700 dark:text-slate-200;
+  }
+  .row-hover {
+    @apply transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.03];
+  }
+  .link {
+    @apply font-medium text-brand-600 hover:text-brand-700 dark:text-brand-300 dark:hover:text-brand-200;
+  }
+  .kbd {
+    @apply rounded border border-line bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 dark:border-[#2a3b55] dark:bg-[#152135] dark:text-slate-400;
+  }
+}
+
+/* Imigongo — Rwandan geometric art: diamonds, zigzags and stepped bands in black, white and ochre. */
+.imigongo-band {
+  height: 18px;
+  background-color: #0b1b33;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='18' viewBox='0 0 72 18'%3E%3Crect width='72' height='18' fill='%230b1b33'/%3E%3Cpath d='M0 9 12 1l12 8-12 8z' fill='%23f5f7fb'/%3E%3Cpath d='M12 9 24 1l12 8-12 8z' fill='%23d97c3b'/%3E%3Cpath d='M24 9 36 1l12 8-12 8z' fill='%23f5f7fb'/%3E%3Cpath d='M36 9 48 1l12 8-12 8z' fill='%2306b6d4'/%3E%3Cpath d='M48 9 60 1l12 8-12 8z' fill='%23f5f7fb'/%3E%3Cpath d='M60 9 72 1v16z' fill='%23d97c3b'/%3E%3C/svg%3E");
+  background-size: 72px 18px;
+  background-repeat: repeat-x;
+}
+
+.imigongo-tile {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='none'/%3E%3Cpath d='M32 4 60 32 32 60 4 32z' stroke='%23d97c3b' stroke-width='2' fill='none' opacity='.45'/%3E%3Cpath d='M32 16 48 32 32 48 16 32z' stroke='%23f5f7fb' stroke-width='1.5' fill='none' opacity='.25'/%3E%3Cpath d='M8 56h12V44M44 8h12v12' stroke='%2306b6d4' stroke-width='1.5' opacity='.35'/%3E%3C/svg%3E");
+  background-size: 64px 64px;
+}
+
+.auth-canvas {
+  background:
+    radial-gradient(1100px 600px at 12% -10%, rgba(37, 99, 235, 0.28), transparent 60%),
+    radial-gradient(900px 500px at 100% 100%, rgba(217, 124, 59, 0.18), transparent 55%),
+    linear-gradient(160deg, #081426 0%, #0b1b33 55%, #0f2342 100%);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

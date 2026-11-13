@@ -1,0 +1,8 @@
+process.env.NODE_ENV = 'test'
+process.env.MONGODB_URI = process.env.TEST_MONGODB_URI ?? 'mongodb://127.0.0.1:27017/conductnexus_test'
+process.env.JWT_ACCESS_SECRET = 'test-only-secret-value-0123456789abcdef'
+process.env.CORS_ORIGIN = 'http://localhost:5173'
+process.env.ENABLE_WHATSAPP = 'false'
+process.env.SMTP_HOST = ''
+process.env.ADMIN_EMAIL = ''
+process.env.ADMIN_PASSWORD = ''
