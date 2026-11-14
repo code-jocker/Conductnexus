@@ -8,7 +8,7 @@ import { ApiError } from '../shared/errors.js'
 import { addDays, addMinutes, normalizeRwandaPhone, randomCode, randomToken, sha256 } from '../shared/utils.js'
 import { getUserContext, invalidateUserAccess, type AuthContext } from './rbac.service.js'
 import { clearSessionCache } from './session.service.js'
-import { resetEmail, sendMail, verificationEmail } from './email.service.js'
+import { resetEmail, sendMail, twoFactorEmail, verificationEmail } from './email.service.js'
 import { logger } from '../shared/logger.js'
 
 export const REFRESH_COOKIE = 'cn_refresh'
@@ -88,10 +88,51 @@ export function verifyAccessToken(token: string): AccessClaims {
   }
 }
 
+export const TWO_FACTOR_TTL_MINUTES = 10
+export const TWO_FACTOR_MAX_ATTEMPTS = 5
+
+export type PasswordLoginResult =
+  | { status: 'authenticated'; tokens: TokenPair; ctx: AuthContext }
+  | {
+      status: 'two_factor_required'
+      challenge: string
+      userId: string
+      name: string
+      email: string
+      delivered: boolean
+      devCode?: string
+    }
+
+function signTwoFactorChallenge(userId: Types.ObjectId | string): string {
+  return jwt.sign({ sub: String(userId), typ: '2fa' }, env.JWT_ACCESS_SECRET, { expiresIn: `${TWO_FACTOR_TTL_MINUTES}m` })
+}
+
+function userIdFromTwoFactorChallenge(token: string): string {
+  try {
+    const payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as { sub?: string; typ?: string }
+    if (!payload.sub || payload.typ !== '2fa') throw new Error('invalid challenge')
+    return payload.sub
+  } catch {
+    throw ApiError.unauthorized('Your verification session expired. Please sign in again.')
+  }
+}
+
+async function issueTwoFactorChallenge(user: IUser): Promise<{ delivered: boolean; devCode?: string }> {
+  const code = randomCode(6)
+  user.twoFactorCodeHash = sha256(`${user._id}:${code}`)
+  user.twoFactorExpires = addMinutes(new Date(), TWO_FACTOR_TTL_MINUTES)
+  user.twoFactorAttempts = 0
+  user.twoFactorCodeSentAt = new Date()
+  await user.save()
+  const mail = twoFactorEmail(user.name, code)
+  const result = await sendMail({ to: user.email, ...mail })
+  return { delivered: result.delivered, devCode: !isProd && !smtpConfigured ? code : undefined }
+}
+
 export async function loginWithPassword(input: {
   email: string
   password: string
-} & ClientMeta): Promise<{ tokens: TokenPair; ctx: AuthContext }> {
+} & ClientMeta): Promise<PasswordLoginResult> {
   const settings = await getSettings()
   const email = input.email.trim().toLowerCase()
   const user = await User.findOne({ email }).select('+passwordHash')
@@ -115,11 +156,126 @@ export async function loginWithPassword(input: {
   }
   user.failedLoginCount = 0
   user.lockUntil = undefined
+  await user.save()
+
+  if (user.twoFactorEnabled) {
+    const challenge = signTwoFactorChallenge(user._id)
+    const delivery = await issueTwoFactorChallenge(user)
+    return {
+      status: 'two_factor_required',
+      challenge,
+      userId: String(user._id),
+      name: user.name,
+      email: user.email,
+      ...delivery,
+    }
+  }
+
+  user.lastLoginAt = new Date()
+  await user.save()
+  const tokens = await issueTokens(user, input)
+  const ctx = await getUserContext(user._id)
+  return { status: 'authenticated', tokens, ctx }
+}
+
+export async function verifyTwoFactorChallenge(input: {
+  challenge: string
+  code: string
+} & ClientMeta): Promise<{ tokens: TokenPair; ctx: AuthContext }> {
+  const userId = userIdFromTwoFactorChallenge(input.challenge)
+  const user = await User.findById(userId).select('+twoFactorCodeHash +twoFactorExpires +twoFactorAttempts')
+  if (!user) throw ApiError.unauthorized('Account not found')
+  if (!user.twoFactorEnabled) throw ApiError.badRequest('Two-factor authentication is not enabled for this account.')
+  if (!user.twoFactorCodeHash || !user.twoFactorExpires) {
+    throw ApiError.unauthorized('No verification code is pending. Please sign in again.')
+  }
+  if (user.twoFactorExpires < new Date()) {
+    throw ApiError.badRequest('The verification code has expired. Please sign in again.')
+  }
+  if ((user.twoFactorAttempts ?? 0) >= TWO_FACTOR_MAX_ATTEMPTS) {
+    user.twoFactorCodeHash = undefined
+    user.twoFactorExpires = undefined
+    user.twoFactorAttempts = 0
+    await user.save()
+    throw ApiError.tooMany('Too many incorrect verification codes. Please sign in again.')
+  }
+  const provided = sha256(`${user._id}:${input.code.trim()}`)
+  if (provided !== user.twoFactorCodeHash) {
+    user.twoFactorAttempts = (user.twoFactorAttempts ?? 0) + 1
+    await user.save()
+    throw ApiError.unauthorized('The verification code is incorrect.')
+  }
+  user.twoFactorCodeHash = undefined
+  user.twoFactorExpires = undefined
+  user.twoFactorAttempts = 0
+  user.twoFactorCodeSentAt = undefined
   user.lastLoginAt = new Date()
   await user.save()
   const tokens = await issueTokens(user, input)
   const ctx = await getUserContext(user._id)
   return { tokens, ctx }
+}
+
+export async function twoFactorStatus(userId: string | Types.ObjectId): Promise<{ enabled: boolean; mandatory: boolean }> {
+  const [user, settings] = await Promise.all([User.findById(userId), getSettings()])
+  if (!user) throw ApiError.notFound('Account not found')
+  return { enabled: Boolean(user.twoFactorEnabled), mandatory: Boolean(settings.security.requireTwoFactor) }
+}
+
+export async function beginTwoFactorEnrollment(
+  userId: string | Types.ObjectId,
+  password: string,
+): Promise<{ delivered: boolean; devCode?: string }> {
+  const user = await User.findById(userId).select('+passwordHash')
+  if (!user) throw ApiError.notFound('Account not found')
+  if (user.twoFactorEnabled) throw ApiError.badRequest('Two-factor authentication is already enabled.')
+  if (!user.passwordHash) throw ApiError.badRequest('Set a password before enabling two-factor authentication.')
+  if (!(await verifyPassword(password, user.passwordHash))) throw ApiError.badRequest('Password is incorrect')
+  return issueTwoFactorChallenge(user)
+}
+
+export async function confirmTwoFactorEnrollment(userId: string | Types.ObjectId, code: string): Promise<void> {
+  const user = await User.findById(userId).select('+twoFactorCodeHash +twoFactorExpires +twoFactorAttempts')
+  if (!user) throw ApiError.notFound('Account not found')
+  if (!user.twoFactorCodeHash || !user.twoFactorExpires) {
+    throw ApiError.badRequest('Start the two-factor setup again to receive a new code.')
+  }
+  if (user.twoFactorExpires < new Date()) {
+    throw ApiError.badRequest('The verification code has expired. Start the two-factor setup again.')
+  }
+  if ((user.twoFactorAttempts ?? 0) >= TWO_FACTOR_MAX_ATTEMPTS) {
+    user.twoFactorCodeHash = undefined
+    user.twoFactorExpires = undefined
+    user.twoFactorAttempts = 0
+    await user.save()
+    throw ApiError.tooMany('Too many incorrect verification codes. Start the two-factor setup again.')
+  }
+  const provided = sha256(`${user._id}:${code.trim()}`)
+  if (provided !== user.twoFactorCodeHash) {
+    user.twoFactorAttempts = (user.twoFactorAttempts ?? 0) + 1
+    await user.save()
+    throw ApiError.unauthorized('The verification code is incorrect.')
+  }
+  user.twoFactorEnabled = true
+  user.twoFactorCodeHash = undefined
+  user.twoFactorExpires = undefined
+  user.twoFactorAttempts = 0
+  user.twoFactorCodeSentAt = undefined
+  await user.save()
+}
+
+export async function disableTwoFactor(userId: string | Types.ObjectId, password: string): Promise<void> {
+  const user = await User.findById(userId).select('+passwordHash')
+  if (!user) throw ApiError.notFound('Account not found')
+  if (user.passwordHash && !(await verifyPassword(password, user.passwordHash))) {
+    throw ApiError.badRequest('Password is incorrect')
+  }
+  user.twoFactorEnabled = false
+  user.twoFactorCodeHash = undefined
+  user.twoFactorExpires = undefined
+  user.twoFactorAttempts = 0
+  user.twoFactorCodeSentAt = undefined
+  await user.save()
 }
 
 // ── Firebase / Google Sign-In ───────────────────────────────────────────────

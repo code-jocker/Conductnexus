@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import {
   KeyboardAvoidingView,
   Platform,
@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons'
 import { useAuth } from '../../src/auth/AuthProvider'
 import { useGoogleSignIn } from '../../src/auth/google'
 import { apiErrorMessage } from '../../src/api/client'
+import type { TwoFactorChallenge } from '../../src/api/endpoints'
 import { Button, TextField } from '../../src/components/ui'
 import { radius, spacing, useTheme } from '../../src/theme'
 
@@ -28,7 +29,11 @@ type FormValues = z.infer<typeof schema>
 
 export default function LoginScreen() {
   const theme = useTheme()
-  const { signIn, signInWithGoogleToken, biometricsLocked, unlockWithBiometric, schoolName } = useAuth()
+  const { signIn, verifyTwoFactor, signInWithGoogleToken, biometricsLocked, unlockWithBiometric, schoolName } = useAuth()
+  const [challenge, setChallenge] = useState<TwoFactorChallenge | null>(null)
+  const [code, setCode] = useState('')
+  const [verifying, setVerifying] = useState(false)
+  const [verifyError, setVerifyError] = useState<string | null>(null)
   const google = useGoogleSignIn(
     useCallback(
       async (token: string) => {
@@ -50,12 +55,37 @@ export default function LoginScreen() {
 
   const submit = handleSubmit(async (values) => {
     try {
-      await signIn(values.email, values.password)
+      const pending = await signIn(values.email, values.password)
+      if (pending) {
+        setChallenge(pending)
+        setCode(pending.devCode ?? '')
+        return
+      }
       router.replace('/')
     } catch (err) {
       setError('root', { message: apiErrorMessage(err) })
     }
   })
+
+  const verify = async () => {
+    if (!challenge) return
+    setVerifyError(null)
+    setVerifying(true)
+    try {
+      await verifyTwoFactor(challenge.challenge, code.trim())
+      router.replace('/')
+    } catch (err) {
+      setVerifyError(apiErrorMessage(err))
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  const cancelChallenge = () => {
+    setChallenge(null)
+    setCode('')
+    setVerifyError(null)
+  }
 
   const unlock = async () => {
     const ok = await unlockWithBiometric()
@@ -80,6 +110,31 @@ export default function LoginScreen() {
               Use the same account you use on the web.
             </Text>
 
+            {challenge ? (
+              <View>
+                <View style={{ backgroundColor: theme.primarySoft, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md }}>
+                  <Text style={{ color: theme.primary, fontSize: 13 }}>
+                    We sent a 6-digit code to {challenge.email}. Enter it to finish signing in.
+                  </Text>
+                </View>
+                <TextField
+                  label="Verification code"
+                  placeholder="000000"
+                  keyboardType="number-pad"
+                  autoCapitalize="none"
+                  autoComplete="one-time-code"
+                  textContentType="oneTimeCode"
+                  value={code}
+                  onChangeText={(t) => setCode(t.replace(/\D/g, '').slice(0, 6))}
+                  error={verifyError ?? undefined}
+                />
+                <Button title="Verify and sign in" icon="shield-checkmark" onPress={() => void verify()} loading={verifying} />
+                <Pressable onPress={cancelChallenge} hitSlop={8} style={{ marginTop: spacing.md }}>
+                  <Text style={{ color: theme.textMuted, fontSize: 13, textAlign: 'center' }}>Use a different account</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <>
             {biometricsLocked ? (
               <View style={{ backgroundColor: theme.primarySoft, borderRadius: radius.md, padding: spacing.lg, marginBottom: spacing.lg }}>
                 <Text style={{ color: theme.primary, fontWeight: '700' }}>Saved session locked</Text>
@@ -158,6 +213,8 @@ export default function LoginScreen() {
                 <Text style={{ color: theme.textMuted, fontSize: 12 }}>Privacy</Text>
               </Pressable>
             </View>
+              </>
+            )}
           </View>
 
           <Text style={styles.footer}>Powered by Shyaka clever prince a.k.a Code jocker</Text>

@@ -1,14 +1,18 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { Types } from 'mongoose'
 import { authenticate } from '../middleware/auth.js'
-import { authLimiter, forgotLimiter } from '../middleware/error.js'
+import { authLimiter, forgotLimiter, twoFactorLimiter } from '../middleware/error.js'
 import { asyncHandler, ok, validate } from '../shared/http.js'
 import { ApiError } from '../shared/errors.js'
 import { writeAudit } from '../services/audit.service.js'
 import {
   REFRESH_COOKIE,
+  beginTwoFactorEnrollment,
   changePassword,
   completeSetup,
+  confirmTwoFactorEnrollment,
+  disableTwoFactor,
   loginWithGoogle,
   loginWithPassword,
   refreshCookieOptions,
@@ -19,7 +23,9 @@ import {
   rotateRefreshToken,
   sendVerificationEmail,
   setupStatus,
+  twoFactorStatus,
   verifyEmailToken,
+  verifyTwoFactorChallenge,
   type TokenPair,
 } from '../services/auth.service.js'
 import { getSettings, User as UserModel } from '../models/core.js'
@@ -120,11 +126,31 @@ router.post(
     }),
   }),
   asyncHandler(async (req, res) => {
-    const { tokens, ctx } = await loginWithPassword({
+    const result = await loginWithPassword({
       email: req.body.email,
       password: req.body.password,
       ...clientMeta(req, undefined, 'web'),
     })
+    if (result.status === 'two_factor_required') {
+      await writeAudit({
+        req,
+        actor: { userId: new Types.ObjectId(result.userId), name: result.name },
+        action: 'auth.2fa_challenged',
+        resourceType: 'User',
+        resourceId: result.userId,
+      })
+      return ok(res, {
+        twoFactorRequired: true,
+        challenge: result.challenge,
+        email: result.email,
+        delivered: result.delivered,
+        devCode: result.devCode,
+        message: result.delivered
+          ? 'A verification code was sent to your email.'
+          : 'Email delivery is not configured. Use the development code shown in the server response.',
+      })
+    }
+    const { tokens, ctx } = result
     await writeAudit({ req, actor: ctx, action: 'auth.login', resourceType: 'User', resourceId: String(ctx.userId) })
     sendTokens(res, tokens, { user: ctx.user, permissions: [...ctx.permissions], roles: ctx.roles })
   }),
@@ -207,11 +233,31 @@ router.post(
     }),
   }),
   asyncHandler(async (req, res) => {
-    const { tokens, ctx } = await loginWithPassword({
+    const result = await loginWithPassword({
       email: req.body.email,
       password: req.body.password,
       ...clientMeta(req, req.body.device, 'android'),
     })
+    if (result.status === 'two_factor_required') {
+      await writeAudit({
+        req,
+        actor: { userId: new Types.ObjectId(result.userId), name: result.name },
+        action: 'auth.native_2fa_challenged',
+        resourceType: 'User',
+        resourceId: result.userId,
+      })
+      return ok(res, {
+        twoFactorRequired: true,
+        challenge: result.challenge,
+        email: result.email,
+        delivered: result.delivered,
+        devCode: result.devCode,
+        message: result.delivered
+          ? 'A verification code was sent to your email.'
+          : 'Email delivery is not configured. Use the development code shown in the server response.',
+      })
+    }
+    const { tokens, ctx } = result
     await writeAudit({ req, actor: ctx, action: 'auth.native_login', resourceType: 'User', resourceId: String(ctx.userId) })
     sendNativeTokens(res, tokens, {
       user: ctx.user,
@@ -279,6 +325,108 @@ router.post(
   asyncHandler(async (req, res) => {
     await revokeRefreshToken(req.body.refreshToken)
     ok(res, { message: 'Signed out' })
+  }),
+)
+
+// ── Two-factor authentication (email) ──────────────────────────────────────
+// Password login returns a short-lived challenge token when 2FA is enabled.
+// The client submits that challenge plus the emailed code to receive tokens.
+
+router.post(
+  '/2fa/verify',
+  twoFactorLimiter,
+  validate({
+    body: z.object({
+      challenge: z.string().min(20),
+      code: z.string().trim().length(6),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { tokens, ctx } = await verifyTwoFactorChallenge({
+      challenge: req.body.challenge,
+      code: req.body.code,
+      ...clientMeta(req, undefined, 'web'),
+    })
+    await writeAudit({ req, actor: ctx, action: 'auth.2fa_verified', resourceType: 'User', resourceId: String(ctx.userId) })
+    sendTokens(res, tokens, { user: ctx.user, permissions: [...ctx.permissions], roles: ctx.roles })
+  }),
+)
+
+router.post(
+  '/native/2fa/verify',
+  twoFactorLimiter,
+  validate({
+    body: z.object({
+      challenge: z.string().min(20),
+      code: z.string().trim().length(6),
+      device: deviceSchema,
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { tokens, ctx } = await verifyTwoFactorChallenge({
+      challenge: req.body.challenge,
+      code: req.body.code,
+      ...clientMeta(req, req.body.device, 'android'),
+    })
+    await writeAudit({ req, actor: ctx, action: 'auth.native_2fa_verified', resourceType: 'User', resourceId: String(ctx.userId) })
+    sendNativeTokens(res, tokens, {
+      user: ctx.user,
+      permissions: [...ctx.permissions],
+      roles: ctx.roles,
+    })
+  }),
+)
+
+router.get(
+  '/2fa/status',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    ok(res, await twoFactorStatus(actorOf(req).userId))
+  }),
+)
+
+router.post(
+  '/2fa/enroll',
+  authenticate,
+  authLimiter,
+  validate({ body: z.object({ password: z.string().min(1) }) }),
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    const result = await beginTwoFactorEnrollment(ctx.userId, req.body.password)
+    await writeAudit({ req, actor: ctx, action: 'auth.2fa_enrollment_started', resourceType: 'User', resourceId: String(ctx.userId) })
+    ok(res, {
+      delivered: result.delivered,
+      devCode: result.devCode,
+      message: result.delivered
+        ? 'A verification code was sent to your email.'
+        : 'Email delivery is not configured. Use the development code shown in the server response.',
+    })
+  }),
+)
+
+router.post(
+  '/2fa/enroll/confirm',
+  authenticate,
+  authLimiter,
+  validate({ body: z.object({ code: z.string().trim().length(6) }) }),
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    await confirmTwoFactorEnrollment(ctx.userId, req.body.code)
+    await writeAudit({ req, actor: ctx, action: 'auth.2fa_enabled', resourceType: 'User', resourceId: String(ctx.userId) })
+    ok(res, { message: 'Two-factor authentication is now enabled.' })
+  }),
+)
+
+router.post(
+  '/2fa/disable',
+  authenticate,
+  authLimiter,
+  validate({ body: z.object({ password: z.string().default('') }) }),
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    await disableTwoFactor(ctx.userId, req.body.password)
+    await writeAudit({ req, actor: ctx, action: 'auth.2fa_disabled', resourceType: 'User', resourceId: String(ctx.userId) })
+    ok(res, { message: 'Two-factor authentication is disabled.' })
   }),
 )
 

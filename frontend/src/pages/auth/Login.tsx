@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowRight, Eye, EyeOff, KeyRound, Mail } from 'lucide-react'
+import { ArrowRight, Eye, EyeOff, KeyRound, Mail, ShieldCheck } from 'lucide-react'
 import { AuthLayout } from '../../components/layout/AuthLayout'
 import { Alert, Button, Field, Input } from '../../components/ui'
 import { useAuth } from '../../lib/auth'
@@ -11,7 +11,7 @@ import { useToast } from '../../components/toast'
 type SetupStatus = { needsSetup: boolean; schoolName?: string; firebaseConfigured?: boolean }
 
 export function LoginPage() {
-  const { login, loginWithGoogle } = useAuth()
+  const { login, verifyTwoFactor, loginWithGoogle } = useAuth()
   const { success, error: toastError, info } = useToast()
   const navigate = useNavigate()
   const location = useLocation()
@@ -22,6 +22,8 @@ export function LoginPage() {
   const [googleBusy, setGoogleBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<SetupStatus | null>(null)
+  const [twoFactor, setTwoFactor] = useState<{ challenge: string; email: string; devCode?: string } | null>(null)
+  const [code, setCode] = useState('')
 
   useEffect(() => {
     get<SetupStatus>('/auth/setup-status')
@@ -39,7 +41,16 @@ export function LoginPage() {
     setError(null)
     setBusy(true)
     try {
-      const me = await login(email.trim(), password)
+      const result = await login(email.trim(), password)
+      if (result.status === 'two_factor_required') {
+        setTwoFactor({ challenge: result.challenge, email: result.email, devCode: result.devCode })
+        setCode(result.devCode ?? '')
+        if (!result.delivered && result.devCode) {
+          info('Email delivery is not configured. Use the development code shown in the field.')
+        }
+        return
+      }
+      const me = result.me
       success(`Welcome back, ${me.user.name.split(' ')[0]}`)
       navigate(me.user.mustChangePassword ? '/change-password' : from, { replace: true })
     } catch (err) {
@@ -47,6 +58,29 @@ export function LoginPage() {
     } finally {
       setBusy(false)
     }
+  }
+
+  async function onVerify(e: React.FormEvent) {
+    e.preventDefault()
+    if (!twoFactor) return
+    setError(null)
+    setBusy(true)
+    try {
+      const me = await verifyTwoFactor(twoFactor.challenge, code.trim())
+      success(`Welcome back, ${me.user.name.split(' ')[0]}`)
+      navigate(me.user.mustChangePassword ? '/change-password' : from, { replace: true })
+    } catch (err) {
+      setError(apiError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function cancelTwoFactor() {
+    setTwoFactor(null)
+    setCode('')
+    setError(null)
+    setPassword('')
   }
 
   async function onGoogle() {
@@ -76,63 +110,96 @@ export function LoginPage() {
       subtitle={status?.schoolName ? `Continue to ${status.schoolName}` : 'Use your school account to continue.'}
     >
       {error && (
-        <Alert tone="danger" title="Unable to sign in">
+        <Alert tone="danger" title={twoFactor ? 'Verification failed' : 'Unable to sign in'}>
           {error}
         </Alert>
       )}
 
-      <form onSubmit={onSubmit} className="mt-4 space-y-4">
-        <Field label="School email" required>
-          <div className="relative">
-            <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input
-              type="email"
-              autoComplete="email"
-              required
-              className="pl-9"
-              placeholder="you@school.rw"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
+      {twoFactor ? (
+        <form onSubmit={onVerify} className="mt-4 space-y-4">
+          <div className="flex items-start gap-3 rounded-lg border border-line bg-slate-50 p-3 text-sm text-slate-600 dark:border-[#26374f] dark:bg-[#101d33] dark:text-slate-300">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-brand-600 dark:text-brand-300" />
+            <p>
+              We sent a 6-digit verification code to <span className="font-semibold">{twoFactor.email}</span>. Enter it below to finish signing in.
+            </p>
           </div>
-        </Field>
+          <Field label="Verification code" required>
+            <div className="relative">
+              <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                required
+                maxLength={6}
+                className="pl-9 tracking-[0.4em]"
+                placeholder="000000"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              />
+            </div>
+          </Field>
+          <Button type="submit" loading={busy} className="w-full" icon={ArrowRight}>
+            Verify and sign in
+          </Button>
+          <button type="button" onClick={cancelTwoFactor} className="w-full text-center text-xs font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400">
+            Use a different account
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={onSubmit} className="mt-4 space-y-4">
+          <Field label="School email" required>
+            <div className="relative">
+              <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                type="email"
+                autoComplete="email"
+                required
+                className="pl-9"
+                placeholder="you@school.rw"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+          </Field>
 
-        <Field label="Password" required>
-          <div className="relative">
-            <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input
-              type={showPassword ? 'text' : 'password'}
-              autoComplete="current-password"
-              required
-              className="pl-9 pr-10"
-              placeholder="Your password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword((v) => !v)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-            >
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
+          <Field label="Password" required>
+            <div className="relative">
+              <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                required
+                className="pl-9 pr-10"
+                placeholder="Your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </Field>
+
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-500 dark:text-slate-400">Accounts are created by your school administrator.</span>
+            <Link to="/forgot-password" className="link text-xs font-semibold">
+              Forgot password?
+            </Link>
           </div>
-        </Field>
 
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-500 dark:text-slate-400">Accounts are created by your school administrator.</span>
-          <Link to="/forgot-password" className="link text-xs font-semibold">
-            Forgot password?
-          </Link>
-        </div>
+          <Button type="submit" loading={busy} className="w-full" icon={ArrowRight}>
+            Sign in
+          </Button>
+        </form>
+      )}
 
-        <Button type="submit" loading={busy} className="w-full" icon={ArrowRight}>
-          Sign in
-        </Button>
-      </form>
-
-      {(firebaseEnabled || status?.firebaseConfigured) && (
+      {!twoFactor && (firebaseEnabled || status?.firebaseConfigured) && (
         <>
           <div className="my-5 flex items-center gap-3">
             <span className="h-px flex-1 bg-line dark:bg-[#26374f]" />

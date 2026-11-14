@@ -7,9 +7,11 @@ import { connectDatabase, disconnectDatabase } from '../config/db.js'
 import { hashPassword } from '../services/auth.service.js'
 import { ensureInitialAllocation } from '../services/ledger.service.js'
 import { seedRbac, seedSchoolDefaults } from '../services/seed.service.js'
-import { Role, User, UserRole } from '../models/core.js'
-import { AcademicYear, ClassModel, Student, Term } from '../models/school.js'
+import { Role, Settings, User, UserRole } from '../models/core.js'
+import { AcademicYear, ClassModel, GuardianLink, Parent, Student, Term } from '../models/school.js'
 import { Offence } from '../models/discipline.js'
+import { MessageQueue } from '../models/communications.js'
+import { queueParentMessage } from '../services/communication.service.js'
 
 const PASSWORD = 'TestPass2026'
 let app: Express
@@ -558,5 +560,231 @@ describe('student CRUD, custom fields and bulk import', () => {
       .set(auth('teacher@test.rw'))
       .send({ rows: [{ firstName: 'Blocked', lastName: 'Row', gender: 'male', classId }] })
     expect(res.status).toBe(403)
+  })
+})
+
+describe('bulk deduct and reward (ledger-critical)', () => {
+  const bulkStudents: string[] = []
+  let offenceId = ''
+
+  beforeAll(async () => {
+    const cls = await ClassModel.findOne({ name: 'S1' }).lean()
+    if (!cls) throw new Error('Seed class S1 missing')
+    const bulkClass = String(cls._id)
+    for (const [first, last] of [
+      ['Bulk', 'One'],
+      ['Bulk', 'Two'],
+      ['Bulk', 'Three'],
+    ]) {
+      const s = await request(app)
+        .post('/api/v1/students')
+        .set(auth('admin@test.rw'))
+        .send({ firstName: first, lastName: last, gender: 'male', classId: bulkClass })
+      bulkStudents.push(s.body.data._id)
+    }
+    const off = await request(app)
+      .post('/api/v1/offences')
+      .set(auth('admin@test.rw'))
+      .send({ code: 'BULK-T', name: 'Bulk Test Offence', category: 'Test', deduction: 5, severity: 'minor' })
+    offenceId = off.body.data._id
+  })
+
+  it('previews a bulk deduction without posting anything', async () => {
+    const res = await request(app)
+      .post('/api/v1/discipline/bulk/preview')
+      .set(auth('deputy@test.rw'))
+      .send({ type: 'deduction', scope: 'selection', studentIds: bulkStudents, offenceId, reason: 'Bulk preview test' })
+    expect(res.status).toBe(200)
+    expect(res.body.data.count).toBe(3)
+    expect(res.body.data.applicable).toBe(3)
+    expect(res.body.data.lines.every((line: { projectedBalance: number }) => line.projectedBalance === 35)).toBe(true)
+  })
+
+  it('applies a deduction per student with audited ledger entries', async () => {
+    const res = await request(app)
+      .post('/api/v1/discipline/bulk/apply')
+      .set(auth('deputy@test.rw'))
+      .set('Idempotency-Key', 'bulk-deduct-1')
+      .send({ type: 'deduction', scope: 'selection', studentIds: bulkStudents, offenceId, reason: 'Bulk deduction test' })
+    expect(res.status).toBe(201)
+    expect(res.body.data.applied).toBe(3)
+    expect(res.body.data.failed).toBe(0)
+    for (const id of bulkStudents) {
+      const ledger = await request(app)
+        .get('/api/v1/discipline/ledger')
+        .set(auth('deputy@test.rw'))
+        .query({ studentId: id })
+      const deductions = ledger.body.data.transactions.filter((t: { type: string }) => t.type === 'deduction')
+      expect(deductions.length).toBe(1)
+      expect(deductions[0].change).toBe(-5)
+    }
+  })
+
+  it('replays a duplicate bulk apply with the same idempotency key without changing balances', async () => {
+    const res = await request(app)
+      .post('/api/v1/discipline/bulk/apply')
+      .set(auth('deputy@test.rw'))
+      .set('Idempotency-Key', 'bulk-deduct-1')
+      .send({ type: 'deduction', scope: 'selection', studentIds: bulkStudents, offenceId, reason: 'Bulk deduction test' })
+    expect(res.status).toBe(201)
+    expect(res.headers['idempotent-replay']).toBe('true')
+    for (const id of bulkStudents) {
+      const ledger = await request(app)
+        .get('/api/v1/discipline/ledger')
+        .set(auth('deputy@test.rw'))
+        .query({ studentId: id })
+      const deductions = ledger.body.data.transactions.filter((t: { type: string }) => t.type === 'deduction')
+      expect(deductions.length).toBe(1)
+    }
+  })
+
+  it('applies a reward per student', async () => {
+    const res = await request(app)
+      .post('/api/v1/discipline/bulk/apply')
+      .set(auth('deputy@test.rw'))
+      .send({ type: 'reward', scope: 'selection', studentIds: bulkStudents, points: 3, reason: 'Bulk reward test' })
+    expect(res.status).toBe(201)
+    expect(res.body.data.applied).toBe(3)
+    for (const id of bulkStudents) {
+      const ledger = await request(app)
+        .get('/api/v1/discipline/ledger')
+        .set(auth('deputy@test.rw'))
+        .query({ studentId: id })
+      const rewards = ledger.body.data.transactions.filter((t: { type: string }) => t.type === 'reward')
+      expect(rewards.length).toBe(1)
+      expect(rewards[0].change).toBe(3)
+    }
+  })
+
+  it('keeps the ledger reconcilable after bulk operations', async () => {
+    const recon = await request(app)
+      .get('/api/v1/discipline/ledger/reconciliation')
+      .set(auth('admin@test.rw'))
+    expect(recon.status).toBe(200)
+    expect(recon.body.data.healthy).toBe(true)
+  })
+
+  it('denies bulk deduction to a teacher without approval authority', async () => {
+    const res = await request(app)
+      .post('/api/v1/discipline/bulk/apply')
+      .set(auth('teacher@test.rw'))
+      .send({ type: 'deduction', scope: 'selection', studentIds: bulkStudents, offenceId, reason: 'Should be denied' })
+    expect(res.status).toBe(403)
+  })
+})
+
+describe('email two-factor authentication', () => {
+  const email = 'twofactor@test.rw'
+  let ipCounter = 0
+  // Distinct source addresses keep each request in its own rate-limit bucket so
+  // the shared auth limiter never turns a correct assertion into a 429.
+  function freshIp() {
+    ipCounter += 1
+    return { 'X-Forwarded-For': `10.10.${Math.floor(ipCounter / 250)}.${ipCounter % 250}` }
+  }
+
+  async function loginExpectChallenge(): Promise<{ challenge: string; devCode?: string }> {
+    const res = await request(app).post('/api/v1/auth/login').set(freshIp()).send({ email, password: PASSWORD })
+    expect(res.status).toBe(200)
+    expect(res.body.data.twoFactorRequired).toBe(true)
+    expect(res.body.data.challenge).toBeTruthy()
+    expect(res.body.data.devCode).toMatch(/^\d{6}$/)
+    return { challenge: res.body.data.challenge, devCode: res.body.data.devCode }
+  }
+
+  function other(code: string) {
+    return String((Number(code) + 1) % 1_000_000).padStart(6, '0')
+  }
+
+  it('enables two-factor authentication with an emailed code', async () => {
+    await createUser(email, 'Two Factor Teacher', 'TEACHER')
+    const before = await request(app).post('/api/v1/auth/login').set(freshIp()).send({ email, password: PASSWORD })
+    expect(before.status).toBe(200)
+    expect(before.body.data.accessToken).toBeTruthy()
+    expect(before.body.data.twoFactorRequired).toBeFalsy()
+    tokens[email] = before.body.data.accessToken
+
+    const enroll = await request(app).post('/api/v1/auth/2fa/enroll').set({ ...freshIp(), ...auth(email) }).send({ password: PASSWORD })
+    expect(enroll.status).toBe(200)
+    expect(enroll.body.data.devCode).toMatch(/^\d{6}$/)
+
+    const wrong = await request(app)
+      .post('/api/v1/auth/2fa/enroll/confirm')
+      .set({ ...freshIp(), ...auth(email) })
+      .send({ code: other(enroll.body.data.devCode) })
+    expect(wrong.status).toBe(401)
+
+    const confirm = await request(app)
+      .post('/api/v1/auth/2fa/enroll/confirm')
+      .set({ ...freshIp(), ...auth(email) })
+      .send({ code: enroll.body.data.devCode })
+    expect(confirm.status).toBe(200)
+
+    const status = await request(app).get('/api/v1/auth/2fa/status').set({ ...freshIp(), ...auth(email) })
+    expect(status.status).toBe(200)
+    expect(status.body.data.enabled).toBe(true)
+  })
+
+  it('rejects an incorrect verification code at login', async () => {
+    const { challenge, devCode } = await loginExpectChallenge()
+    const denied = await request(app)
+      .post('/api/v1/auth/2fa/verify')
+      .set(freshIp())
+      .send({ challenge, code: other(devCode!) })
+    expect(denied.status).toBe(401)
+  })
+
+  it('issues tokens only after a correct verification code', async () => {
+    const { challenge, devCode } = await loginExpectChallenge()
+    const verified = await request(app)
+      .post('/api/v1/auth/2fa/verify')
+      .set(freshIp())
+      .send({ challenge, code: devCode })
+    expect(verified.status).toBe(200)
+    expect(verified.body.data.accessToken).toBeTruthy()
+
+    const me = await request(app).get('/api/v1/auth/me').set({ Authorization: `Bearer ${verified.body.data.accessToken}` })
+    expect(me.status).toBe(200)
+    expect(me.body.data.user.email).toBe(email)
+  })
+
+  it('locks a challenge after too many incorrect codes', async () => {
+    const ip = freshIp()
+    const { challenge, devCode } = await loginExpectChallenge()
+    const bad = other(devCode!)
+    for (let i = 0; i < 5; i++) {
+      const attempt = await request(app).post('/api/v1/auth/2fa/verify').set(ip).send({ challenge, code: bad })
+      expect(attempt.status).toBe(401)
+    }
+    // Attempts are exhausted, so even the correct code is now rejected.
+    const blocked = await request(app).post('/api/v1/auth/2fa/verify').set(ip).send({ challenge, code: devCode })
+    expect(blocked.status).toBeGreaterThanOrEqual(400)
+  })
+})
+
+describe('parent messaging, Kinyarwanda templates and portal link', () => {
+  it('renders the Kinyarwanda variant and appends the parent-portal link', async () => {
+    await Settings.findOneAndUpdate(
+      { key: 'system' },
+      { $set: { 'comms.whatsappEnabled': true, 'academic.language': 'rw' } },
+    )
+
+    const parent = await Parent.create({ name: 'Rwanda Parent', phone: '0788000000', whatsappConsent: true })
+    const student = await Student.findOne({ status: 'active' }).lean()
+    if (!student) throw new Error('No active student available')
+    await GuardianLink.create({ studentId: student._id, parentId: parent._id, relationship: 'mother', isPrimary: true })
+
+    const result = await queueParentMessage({ studentId: String(student._id), templateKey: 'incident_deduction' })
+    expect(result.queued).toBeGreaterThan(0)
+
+    const message = await MessageQueue.findOne({ parentId: parent._id }).sort({ createdAt: -1 }).lean()
+    expect(message).toBeTruthy()
+    expect(message!.body).toContain('Muraho')
+    expect(message!.body).toContain('Parent portal:')
+
+    await Settings.findOneAndUpdate(
+      { key: 'system' },
+      { $set: { 'comms.whatsappEnabled': false, 'academic.language': 'en' } },
+    )
   })
 })

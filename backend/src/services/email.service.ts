@@ -122,3 +122,15 @@ export function inviteEmail(name: string, link: string, temporaryPassword?: stri
     ),
   }
 }
+
+export function twoFactorEmail(name: string, code: string) {
+  return {
+    subject: 'Your ConductNexus verification code',
+    html: shell(
+      `Hello ${name},`,
+      `<p>Use the verification code below to finish signing in to your ConductNexus account.</p>
+       <div style="margin:18px 0;font-size:32px;letter-spacing:10px;font-weight:700;color:#0b1b33;background:#f1f5f9;border-radius:8px;padding:16px;text-align:center">${code}</div>
+       <p style="font-size:12px;color:#64748b">This code expires in 10 minutes. If you did not try to sign in, ignore this email and contact your school administrator.</p>`,
+    ),
+  }
+}

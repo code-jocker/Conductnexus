@@ -27,9 +27,25 @@ async function unwrap<T>(promise: Promise<{ data: ApiEnvelope<T>; headers: unkno
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
-export async function nativeLogin(email: string, password: string): Promise<SessionPayload> {
+export type TwoFactorChallenge = {
+  twoFactorRequired: true
+  challenge: string
+  email: string
+  delivered: boolean
+  devCode?: string
+}
+
+export type NativeLoginResult = SessionPayload | TwoFactorChallenge
+
+export async function nativeLogin(email: string, password: string): Promise<NativeLoginResult> {
   const device = await deviceInfo()
-  const res = await api.post<ApiEnvelope<SessionPayload>>('/auth/native/login', { email, password, device })
+  const res = await api.post<ApiEnvelope<NativeLoginResult>>('/auth/native/login', { email, password, device })
+  return res.data.data
+}
+
+export async function nativeTwoFactorVerify(challenge: string, code: string): Promise<SessionPayload> {
+  const device = await deviceInfo()
+  const res = await api.post<ApiEnvelope<SessionPayload>>('/auth/native/2fa/verify', { challenge, code, device })
   return res.data.data
 }
 

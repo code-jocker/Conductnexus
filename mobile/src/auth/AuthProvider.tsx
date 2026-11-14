@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { setAccessToken, setSessionId, onSessionExpired } from '../api/client'
-import { fetchMe, nativeGoogle, nativeLogin, nativeLogout, nativeRefresh } from '../api/endpoints'
+import { fetchMe, nativeGoogle, nativeLogin, nativeLogout, nativeRefresh, nativeTwoFactorVerify, type TwoFactorChallenge } from '../api/endpoints'
 import type { MePayload, SessionPayload, SessionUser } from '../api/types'
 import { getBiometricsEnabled, getRefreshToken, setRefreshToken, clearRefreshToken } from './storage'
 import { biometricsAvailable, unlockWithBiometrics } from './biometrics'
@@ -19,7 +19,8 @@ type AuthContextValue = {
   biometricsSupported: boolean
   isParentOnly: boolean
   has: (permission: string) => boolean
-  signIn: (email: string, password: string) => Promise<void>
+  signIn: (email: string, password: string) => Promise<TwoFactorChallenge | null>
+  verifyTwoFactor: (challenge: string, code: string) => Promise<void>
   signInWithGoogleToken: (idToken: string) => Promise<void>
   signOut: () => Promise<void>
   unlockWithBiometric: () => Promise<boolean>
@@ -136,7 +137,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(
     async (email: string, password: string) => {
-      const payload = await nativeLogin(email.trim().toLowerCase(), password)
+      const result = await nativeLogin(email.trim().toLowerCase(), password)
+      if ('challenge' in result) {
+        return result
+      }
+      await finishSession(result)
+      queryClient.clear()
+      return null
+    },
+    [finishSession, queryClient],
+  )
+
+  const verifyTwoFactor = useCallback(
+    async (challenge: string, code: string) => {
+      const payload = await nativeTwoFactorVerify(challenge, code)
       await finishSession(payload)
       queryClient.clear()
     },
@@ -202,6 +216,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isParentOnly,
       has,
       signIn,
+      verifyTwoFactor,
       signInWithGoogleToken,
       signOut,
       unlockWithBiometric,
@@ -218,6 +233,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isParentOnly,
       has,
       signIn,
+      verifyTwoFactor,
       signInWithGoogleToken,
       signOut,
       unlockWithBiometric,

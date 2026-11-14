@@ -133,6 +133,7 @@ export interface IIncident extends Document {
   academicYearId?: Types.ObjectId
   termId?: Types.ObjectId
   clientSubmissionId?: string
+  bulkOperationId?: Types.ObjectId
   history: { at: Date; by?: Types.ObjectId; action: string; note?: string }[]
   createdAt: Date
   updatedAt: Date
@@ -210,6 +211,7 @@ const incidentSchema = new Schema<IIncident>(
     academicYearId: { type: Schema.Types.ObjectId, ref: 'AcademicYear' },
     termId: { type: Schema.Types.ObjectId, ref: 'Term' },
     clientSubmissionId: { type: String, unique: true, sparse: true },
+    bulkOperationId: { type: Schema.Types.ObjectId, ref: 'BulkOperation', index: true },
     history: [{ at: { type: Date, default: Date.now }, by: { type: Schema.Types.ObjectId, ref: 'User' }, action: String, note: String }],
   },
   { timestamps: true },
@@ -225,6 +227,7 @@ export interface IDisciplineLedger extends Document {
   termId: Types.ObjectId
   incidentId?: Types.ObjectId
   adjustmentId?: Types.ObjectId
+  bulkOperationId?: Types.ObjectId
   type: 'initial_allocation' | 'deduction' | 'reward' | 'adjustment' | 'reversal' | 'correction'
   previousBalance: number
   change: number
@@ -245,6 +248,7 @@ const ledgerSchema = new Schema<IDisciplineLedger>(
     termId: { type: Schema.Types.ObjectId, ref: 'Term', required: true, index: true },
     incidentId: { type: Schema.Types.ObjectId, ref: 'Incident', index: true },
     adjustmentId: { type: Schema.Types.ObjectId, ref: 'AdjustmentRequest' },
+    bulkOperationId: { type: Schema.Types.ObjectId, ref: 'BulkOperation', index: true },
     type: {
       type: String,
       enum: ['initial_allocation', 'deduction', 'reward', 'adjustment', 'reversal', 'correction'],
@@ -269,7 +273,13 @@ ledgerSchema.index(
 )
 ledgerSchema.index(
   { incidentId: 1, type: 1 },
-  { unique: true, partialFilterExpression: { type: 'deduction' } },
+  { unique: true, partialFilterExpression: { type: 'deduction', incidentId: { $type: 'objectId' } } },
+)
+// One entry per student per bulk operation — makes bulk retries idempotent at the
+// row level even when the Idempotency-Key header is absent.
+ledgerSchema.index(
+  { bulkOperationId: 1, studentId: 1, type: 1 },
+  { unique: true, partialFilterExpression: { bulkOperationId: { $type: 'objectId' } } },
 )
 ledgerSchema.pre(['updateOne', 'findOneAndUpdate', 'updateMany', 'deleteOne', 'deleteMany'], function (next) {
   next(new Error('Discipline ledger entries are immutable. Create a compensating transaction instead.'))
@@ -381,3 +391,84 @@ const riskSchema = new Schema<IRiskAssessment>(
 )
 riskSchema.index({ studentId: 1, createdAt: -1 })
 export const RiskAssessment = model<IRiskAssessment>('RiskAssessment', riskSchema)
+
+export interface IBulkResultLine {
+  studentId: Types.ObjectId
+  name: string
+  ok: boolean
+  skipped?: boolean
+  skipReason?: string
+  change?: number
+  newBalance?: number
+  ledgerId?: string
+  error?: string
+}
+
+export interface IBulkOperation extends Document {
+  reference: string
+  type: 'deduction' | 'reward'
+  scope: 'class' | 'stream' | 'selection'
+  classId?: Types.ObjectId
+  streamId?: Types.ObjectId
+  offenceId?: Types.ObjectId
+  points?: number
+  reason: string
+  termId?: Types.ObjectId
+  requestedBy: Types.ObjectId
+  approvedBy?: Types.ObjectId
+  status: 'applying' | 'completed' | 'partial' | 'failed'
+  total: number
+  applied: number
+  skipped: number
+  failed: number
+  results: IBulkResultLine[]
+  clientReference?: string
+  createdAt: Date
+  completedAt?: Date
+}
+
+const bulkResultLineSchema = new Schema<IBulkResultLine>(
+  {
+    studentId: { type: Schema.Types.ObjectId, ref: 'Student' },
+    name: String,
+    ok: Boolean,
+    skipped: Boolean,
+    skipReason: String,
+    change: Number,
+    newBalance: Number,
+    ledgerId: String,
+    error: String,
+  },
+  { _id: false },
+)
+
+const bulkOperationSchema = new Schema<IBulkOperation>(
+  {
+    reference: { type: String, required: true, unique: true },
+    type: { type: String, enum: ['deduction', 'reward'], required: true },
+    scope: { type: String, enum: ['class', 'stream', 'selection'], required: true },
+    classId: { type: Schema.Types.ObjectId, ref: 'Class' },
+    streamId: { type: Schema.Types.ObjectId, ref: 'Stream' },
+    offenceId: { type: Schema.Types.ObjectId, ref: 'Offence' },
+    points: { type: Number },
+    reason: { type: String, required: true },
+    termId: { type: Schema.Types.ObjectId, ref: 'Term' },
+    requestedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    status: { type: String, enum: ['applying', 'completed', 'partial', 'failed'], default: 'applying' },
+    total: { type: Number, default: 0 },
+    applied: { type: Number, default: 0 },
+    skipped: { type: Number, default: 0 },
+    failed: { type: Number, default: 0 },
+    results: { type: [bulkResultLineSchema], default: [] },
+    clientReference: { type: String },
+    completedAt: { type: Date },
+  },
+  { timestamps: { createdAt: true, updatedAt: false } },
+)
+bulkOperationSchema.index({ requestedBy: 1, createdAt: -1 })
+bulkOperationSchema.index(
+  { clientReference: 1, requestedBy: 1 },
+  { unique: true, partialFilterExpression: { clientReference: { $type: 'string' } } },
+)
+export const BulkOperation = model<IBulkOperation>('BulkOperation', bulkOperationSchema)

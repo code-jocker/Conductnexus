@@ -311,6 +311,42 @@ export async function seedSchoolDefaults(opts: {
       subject: 'Positive conduct update',
       body: 'We are pleased to share that {{studentName}} has been recognised for positive behaviour: {{title}}.',
     },
+    // ── Kinyarwanda variants (selected when school language is rw) ──
+    {
+      key: 'incident_deduction_rw',
+      name: 'Itangaziso ry’isoherezwa ry’amanota (Ikinyarwanda)',
+      channel: 'whatsapp' as const,
+      language: 'rw' as const,
+      subject: 'Amakuru y’imyitwarire ya {{studentName}}',
+      body:
+        'Muraho Umubyeyi/Umurezi,\n\nDukumenyesha ko {{studentName}} yari mu cyerekezo gikurikira:\n\nIcyerekezo: {{offenceName}}\nItariki: {{incidentDate}}\nAmanota yisoherejwe: {{deduction}}\nAmanota asigaye mu myitwarire: {{balance}}\n\nMugire icyo mwifasha. Twihutisha kuvugana na mwe.\n\nConductNexus — Uburyo bwa disipulini.',
+    },
+    {
+      key: 'serious_incident_rw',
+      name: 'Itangaziso ry’icyerekezo gikomeye (Ikinyarwanda)',
+      channel: 'whatsapp' as const,
+      language: 'rw' as const,
+      subject: 'Itangaziso rikomeye',
+      body:
+        'Muraho Umubyeyi/Umurezi,\n\nHari icyerekezo gikomeye gikorwa na {{studentName}} cyafashwe kandi kiri gusuzumwa. Umuyobozi w’ishuri azabwo guvugana na mwe.\n\nConductNexus — Uburyo bwa disipulini.',
+    },
+    {
+      key: 'meeting_invitation_rw',
+      name: 'Ubutumire mu nama (Ikinyarwanda)',
+      channel: 'whatsapp' as const,
+      language: 'rw' as const,
+      subject: 'Ubutumire mu nama',
+      body:
+        'Muraho Umubyeyi/Umurezi,\n\nMutabirwa mu nama yerekeye kuri {{studentName}} ku ya {{meetingDate}} saa {{meetingTime}}.\n\nAhantu: {{venue}}\n\nConductNexus — Uburyo bwa disipulini.',
+    },
+    {
+      key: 'conduct_improvement_rw',
+      name: 'Itangaziso ry’imyitwarire myiza (Ikinyarwanda)',
+      channel: 'whatsapp' as const,
+      language: 'rw' as const,
+      subject: 'Amakuru y’imyitwarire myiza',
+      body: 'Twishimiye kukumenyesha ko {{studentName}} yashimwe kubera imyitwarire myiza: {{title}}.',
+    },
   ]
   for (const t of notificationTemplates) {
     await NotificationTemplate.findOneAndUpdate(

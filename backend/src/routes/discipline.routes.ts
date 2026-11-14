@@ -5,7 +5,7 @@ import { authenticate, requirePermission } from '../middleware/auth.js'
 import { idempotency } from '../middleware/idempotency.js'
 import { asyncHandler, created, ok, pagedMeta, parsePagination, queryOf, validate } from '../shared/http.js'
 import { ApiError } from '../shared/errors.js'
-import { Offence, Incident, AdjustmentRequest, DisciplineLedger } from '../models/discipline.js'
+import { Offence, Incident, AdjustmentRequest, DisciplineLedger, BulkOperation } from '../models/discipline.js'
 import { Student } from '../models/school.js'
 import { Recognition } from '../models/support.js'
 import { getSettings } from '../models/core.js'
@@ -22,6 +22,7 @@ import {
 import { requestAdjustment } from '../services/adjustments.service.js'
 import { decideApproval } from '../services/approvals.service.js'
 import { rewardStudent, reverseTransaction, studentConductSummary, reconcileLedger } from '../services/ledger.service.js'
+import { applyBulkOperation, previewBulkOperation } from '../services/bulk.service.js'
 import { resolveTerm } from '../services/academic.service.js'
 import { assertStudentAccess } from '../services/rbac.service.js'
 import { writeAudit } from '../services/audit.service.js'
@@ -474,6 +475,81 @@ router.post(
       reason: req.body.reason,
     })
     created(res, { ledger, recognition })
+  }),
+)
+
+const bulkBody = z.object({
+  type: z.enum(['deduction', 'reward']),
+  scope: z.enum(['class', 'stream', 'selection']),
+  classId: objectId.optional(),
+  streamId: objectId.optional(),
+  studentIds: z.array(objectId).max(500).optional(),
+  offenceId: objectId.optional(),
+  points: z.number().int().min(1).max(20).optional(),
+  reason: z.string().trim().min(5).max(1000),
+  title: z.string().trim().max(160).optional(),
+  termId: objectId.optional(),
+  clientReference: z.string().trim().max(80).optional(),
+})
+
+// Bulk deduct/reward for a whole class, stream, or an explicit selection.
+// Deductions are never applied on report: this is an explicit, authorized,
+// per-student audited action. Deductions additionally require approval
+// authority (DEPUTY_DISCIPLINE / Headteacher) so the approver cannot be a
+// teacher who only records incidents (separation of duties).
+
+router.post(
+  '/discipline/bulk/preview',
+  requirePermission('marks.view'),
+  validate({ body: bulkBody }),
+  asyncHandler(async (req, res) => {
+    ok(res, await previewBulkOperation(req.auth!, req.body as never))
+  }),
+)
+
+router.post(
+  '/discipline/bulk/apply',
+  idempotency('discipline.bulk'),
+  validate({ body: bulkBody }),
+  asyncHandler(async (req, res) => {
+    const { type } = req.body
+    if (type === 'deduction') {
+      if (!req.auth!.permissions.has('marks.deduct') || !req.auth!.permissions.has('marks.adjust.approve')) {
+        throw ApiError.forbidden('Bulk deductions require both mark deduction and approval authority.')
+      }
+    } else if (!req.auth!.permissions.has('marks.reward')) {
+      throw ApiError.forbidden('Missing permission: marks.reward')
+    }
+    const operation = await applyBulkOperation(req.auth!, req.body as never, req)
+    created(res, operation)
+  }),
+)
+
+router.get(
+  '/discipline/bulk',
+  requirePermission('marks.view'),
+  asyncHandler(async (req, res) => {
+    const { page, pageSize, skip } = parsePagination(req.query)
+    const canSeeAll = req.auth!.permissions.has('incidents.view_all')
+    const filter: Record<string, unknown> = canSeeAll ? {} : { requestedBy: req.auth!.userId }
+    const [total, items] = await Promise.all([
+      BulkOperation.countDocuments(filter),
+      BulkOperation.find(filter).sort({ createdAt: -1 }).skip(skip).limit(pageSize).lean(),
+    ])
+    ok(res, items, pagedMeta(total, page, pageSize))
+  }),
+)
+
+router.get(
+  '/discipline/bulk/:id',
+  requirePermission('marks.view'),
+  asyncHandler(async (req, res) => {
+    const operation = await BulkOperation.findById(req.params.id).lean()
+    if (!operation) throw ApiError.notFound('Bulk operation not found')
+    if (String(operation.requestedBy) !== String(req.auth!.userId) && !req.auth!.permissions.has('incidents.view_all')) {
+      throw ApiError.forbidden('You are not authorized to view this bulk operation')
+    }
+    ok(res, operation)
   }),
 )
 

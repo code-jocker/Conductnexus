@@ -30,6 +30,14 @@ export const forgotLimiter = rateLimit({
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many reset requests. Try again later.' } },
 })
 
+export const twoFactorLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many verification attempts. Try again in 15 minutes.' } },
+})
+
 export function notFoundHandler(_req: Request, _res: Response, next: NextFunction) {
   next(ApiError.notFound('API endpoint not found'))
 }

@@ -5,11 +5,28 @@ import { get, post, setToken, getToken } from './api'
 import { signInWithGoogle } from './firebase'
 import type { Me } from './types'
 
+type LoginResponse = {
+  accessToken?: string
+  user?: Me['user']
+  roles?: string[]
+  permissions?: string[]
+  twoFactorRequired?: boolean
+  challenge?: string
+  email?: string
+  delivered?: boolean
+  devCode?: string
+}
+
+export type LoginResult =
+  | { status: 'authenticated'; me: Me }
+  | { status: 'two_factor_required'; challenge: string; email: string; delivered: boolean; devCode?: string }
+
 type AuthValue = {
   me: Me | null
   loading: boolean
   socket: Socket | null
-  login: (email: string, password: string) => Promise<Me>
+  login: (email: string, password: string) => Promise<LoginResult>
+  verifyTwoFactor: (challenge: string, code: string) => Promise<Me>
   loginWithGoogle: () => Promise<{ me: Me | null; hasAccess: boolean; message?: string }>
   logout: () => Promise<void>
   refreshMe: () => Promise<void>
@@ -60,17 +77,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [me])
 
-  const login = useCallback(async (email: string, password: string) => {
-    const data = await post<{ accessToken: string; user: Me['user']; roles: string[]; permissions: string[] }>('/auth/login', {
-      email,
-      password,
-    })
-    setToken(data.accessToken)
-    const next: Me = { user: data.user, roles: data.roles, permissions: data.permissions }
-    queryClient.clear()
-    setMe(next)
-    return next
-  }, [queryClient])
+  const login = useCallback(
+    async (email: string, password: string): Promise<LoginResult> => {
+      const data = await post<LoginResponse>('/auth/login', { email, password })
+      if (data.twoFactorRequired && data.challenge) {
+        return {
+          status: 'two_factor_required',
+          challenge: data.challenge,
+          email: data.email ?? email,
+          delivered: Boolean(data.delivered),
+          devCode: data.devCode,
+        }
+      }
+      if (!data.accessToken || !data.user) throw new Error('Sign-in failed. Please try again.')
+      setToken(data.accessToken)
+      const next: Me = { user: data.user, roles: data.roles ?? [], permissions: data.permissions ?? [] }
+      queryClient.clear()
+      setMe(next)
+      return { status: 'authenticated', me: next }
+    },
+    [queryClient],
+  )
+
+  const verifyTwoFactor = useCallback(
+    async (challenge: string, code: string) => {
+      const data = await post<{ accessToken: string; user: Me['user']; roles: string[]; permissions: string[] }>(
+        '/auth/2fa/verify',
+        { challenge, code },
+      )
+      setToken(data.accessToken)
+      const next: Me = { user: data.user, roles: data.roles, permissions: data.permissions }
+      queryClient.clear()
+      setMe(next)
+      return next
+    },
+    [queryClient],
+  )
 
   const loginWithGoogle = useCallback(async () => {
     const idToken = await signInWithGoogle()
@@ -120,8 +162,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const value = useMemo<AuthValue>(
-    () => ({ me, loading, socket, login, loginWithGoogle, logout, refreshMe, has, hasRole }),
-    [me, loading, socket, login, loginWithGoogle, logout, refreshMe, has, hasRole],
+    () => ({ me, loading, socket, login, verifyTwoFactor, loginWithGoogle, logout, refreshMe, has, hasRole }),
+    [me, loading, socket, login, verifyTwoFactor, loginWithGoogle, logout, refreshMe, has, hasRole],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

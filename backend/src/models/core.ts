@@ -25,6 +25,11 @@ export interface IUser extends Document {
   lockUntil?: Date
   lastLoginAt?: Date
   mustChangePassword: boolean
+  twoFactorEnabled: boolean
+  twoFactorCodeHash?: string
+  twoFactorExpires?: Date
+  twoFactorAttempts: number
+  twoFactorCodeSentAt?: Date
   createdBy?: Types.ObjectId
   createdAt: Date
   updatedAt: Date
@@ -53,6 +58,11 @@ const userSchema = new Schema<IUser>(
     lockUntil: { type: Date },
     lastLoginAt: { type: Date },
     mustChangePassword: { type: Boolean, default: false },
+    twoFactorEnabled: { type: Boolean, default: false },
+    twoFactorCodeHash: { type: String, select: false },
+    twoFactorExpires: { type: Date, select: false },
+    twoFactorAttempts: { type: Number, default: 0, select: false },
+    twoFactorCodeSentAt: { type: Date, select: false },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
   },
   {
@@ -66,6 +76,10 @@ const userSchema = new Schema<IUser>(
         delete ret.passwordResetCodeHash
         delete ret.passwordResetTokenHash
         delete ret.passwordResetExpires
+        delete ret.twoFactorCodeHash
+        delete ret.twoFactorExpires
+        delete ret.twoFactorAttempts
+        delete ret.twoFactorCodeSentAt
         delete ret.__v
         return ret
       },
@@ -327,6 +341,7 @@ export interface ISettings extends Document {
     lockoutMinutes: number
     sessionDays: number
     requireEmailVerification: boolean
+    requireTwoFactor: boolean
   }
   setupCompleted: boolean
   createdAt: Date
@@ -395,6 +410,7 @@ const settingsSchema = new Schema<ISettings>(
       lockoutMinutes: { type: Number, default: 15 },
       sessionDays: { type: Number, default: 14 },
       requireEmailVerification: { type: Boolean, default: false },
+      requireTwoFactor: { type: Boolean, default: false },
     },
     setupCompleted: { type: Boolean, default: false },
   },

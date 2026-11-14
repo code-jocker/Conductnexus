@@ -63,7 +63,12 @@ export async function queueParentMessage(input: ParentMessageInput): Promise<{ q
   const settings = cachedSettings!
   const student = await Student.findById(input.studentId)
   if (!student) throw ApiError.notFound('Student not found')
-  const template = await NotificationTemplate.findOne({ key: input.templateKey, active: true })
+  // Kinyarwanda variant is preferred when the school language is rw; otherwise
+  // fall back to the English template so messages are never dropped.
+  const preferredKey = settings.academic.language === 'rw' ? `${input.templateKey}_rw` : input.templateKey
+  const template =
+    (await NotificationTemplate.findOne({ key: preferredKey, active: true })) ??
+    (await NotificationTemplate.findOne({ key: input.templateKey, active: true }))
   if (!template) throw ApiError.badRequest(`Notification template "${input.templateKey}" is not configured`)
 
   let parents = await GuardianLink.find({ studentId: student._id }).populate<{ parentId: InstanceType<typeof Parent> }>('parentId')
@@ -71,6 +76,7 @@ export async function queueParentMessage(input: ParentMessageInput): Promise<{ q
 
   const incident = input.incidentId ? await Incident.findById(input.incidentId) : null
   const letter = input.letterId ? await Letter.findById(input.letterId) : null
+  const portalUrl = `${env.APP_URL.replace(/\/$/, '')}/portal`
   const vars: Record<string, string | number | undefined> = {
     studentName: student.fullName,
     studentId: student.studentId,
@@ -81,9 +87,14 @@ export async function queueParentMessage(input: ParentMessageInput): Promise<{ q
     incidentDate: incident ? new Date(incident.occurredAt).toLocaleDateString('en-RW', { timeZone: 'Africa/Kigali' }) : '',
     incidentNumber: incident?.incidentNumber ?? '',
     schoolName: settings.school.name,
+    portalUrl,
     letterType: letter?.type ?? input.templateKey,
     ...input.extraVars,
   }
+  const renderedBody = renderTemplate(template.body, vars)
+  // Every parent-facing (WhatsApp) message carries the parent-portal link so
+  // guardians can review authorised, linked-child details.
+  const body = template.channel === 'whatsapp' ? `${renderedBody}\n\nParent portal: ${portalUrl}` : renderedBody
 
   let queued = 0
   let skipped = 0
@@ -107,7 +118,7 @@ export async function queueParentMessage(input: ParentMessageInput): Promise<{ q
         letterId: input.letterId,
         templateKey: input.templateKey,
         subject: template.subject ? renderTemplate(template.subject, vars) : undefined,
-        body: renderTemplate(template.body, vars),
+        body,
         status: 'queued',
         maxAttempts: settings.comms.retryLimit,
         nextAttemptAt: quietHoursNextAttempt(),

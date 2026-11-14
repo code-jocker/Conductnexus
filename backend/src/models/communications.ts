@@ -6,6 +6,7 @@ export interface ILetterTemplate extends Document {
   subject: string
   body: string
   active: boolean
+  language: 'en' | 'rw'
   createdBy?: Types.ObjectId
 }
 
@@ -16,6 +17,7 @@ const letterTemplateSchema = new Schema<ILetterTemplate>(
     subject: { type: String, required: true },
     body: { type: String, required: true },
     active: { type: Boolean, default: true },
+    language: { type: String, enum: ['en', 'rw'], default: 'en' },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true },
@@ -93,6 +95,7 @@ export interface INotificationTemplate extends Document {
   subject: string
   body: string
   active: boolean
+  language: 'en' | 'rw'
 }
 
 const notificationTemplateSchema = new Schema<INotificationTemplate>(
@@ -103,6 +106,7 @@ const notificationTemplateSchema = new Schema<INotificationTemplate>(
     subject: { type: String, default: '' },
     body: { type: String, required: true },
     active: { type: Boolean, default: true },
+    language: { type: String, enum: ['en', 'rw'], default: 'en' },
   },
   { timestamps: true },
 )

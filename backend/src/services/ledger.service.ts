@@ -15,6 +15,7 @@ export type PostTransactionInput = {
   academicYearId?: string | Types.ObjectId | null
   incidentId?: string | Types.ObjectId | null
   adjustmentId?: string | Types.ObjectId | null
+  bulkOperationId?: string | Types.ObjectId | null
   type: IDisciplineLedger['type']
   change: number
   reason: string
@@ -68,6 +69,7 @@ export async function postTransaction(input: PostTransactionInput): Promise<IDis
         termId: input.termId,
         incidentId: input.incidentId ?? undefined,
         adjustmentId: input.adjustmentId ?? undefined,
+        bulkOperationId: input.bulkOperationId ?? undefined,
         type: input.type,
         previousBalance: previous,
         change: applied,
