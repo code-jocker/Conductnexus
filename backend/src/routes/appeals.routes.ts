@@ -31,6 +31,7 @@ router.get(
       : { $or: [{ submittedBy: ctx.userId }, { reviewerId: ctx.userId }] }
     if (req.query.status) filter.status = req.query.status
     if (req.query.studentId) filter.studentId = req.query.studentId
+    if (req.query.incidentId) filter.incidentId = req.query.incidentId
     const [total, items] = await Promise.all([
       Appeal.countDocuments(filter),
       Appeal.find(filter)
@@ -77,6 +78,7 @@ router.post(
       studentId: student._id,
       decisionType: req.body.decisionType,
       decisionRef,
+      incidentId: req.body.incidentId,
       originalDecisionBy: req.body.originalDecisionBy,
       grounds: req.body.grounds,
       reason: req.body.reason,

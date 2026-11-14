@@ -36,6 +36,7 @@ router.get(
       : { $or: [{ createdBy: ctx.userId }, { assignedTo: ctx.userId }] }
     if (req.query.status) filter.status = req.query.status
     if (req.query.studentId) filter.studentId = req.query.studentId
+    if (req.query.incidentId) filter.incidentIds = req.query.incidentId
     if (req.query.q) {
       const rx = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
       const clauses = [{ caseNumber: rx }, { title: rx }]

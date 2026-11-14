@@ -1,0 +1,92 @@
+{
+  "expo": {
+    "name": "ConductNexus",
+    "slug": "conductnexus",
+    "version": "1.0.0",
+    "orientation": "default",
+    "scheme": "conductnexus",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0b1b33"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.conductnexus.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "ConductNexus uses the camera to attach evidence photographs to discipline incidents.",
+        "NSPhotoLibraryUsageDescription": "ConductNexus lets you attach photos from your library to discipline incidents.",
+        "NSFaceIDUsageDescription": "Use Face ID to unlock your saved ConductNexus session."
+      }
+    },
+    "android": {
+      "package": "com.conductnexus.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0b1b33"
+      },
+      "permissions": [
+        "CAMERA",
+        "POST_NOTIFICATIONS",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-sqlite",
+      "expo-web-browser",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0b1b33"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#2563eb"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow ConductNexus to photograph incident evidence."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow ConductNexus to attach photos to incidents."
+        }
+      ],
+      "expo-document-picker",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow ConductNexus to unlock your saved session with Face ID."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    },
+    "experiments": {
+      "reactCompiler": false
+    }
+  }
+}

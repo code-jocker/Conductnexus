@@ -37,6 +37,8 @@ const headteacher = [
   'users.view', 'settings.manage', 'audit.view', 'reports.view', 'reports.export', 'analytics.view',
   'calendar.view', 'calendar.manage', 'notifications.view', 'notifications.manage',
   'students.view', 'students.view_all', 'students.view_assigned', 'students.update', 'students.archive',
+  'students.restore', 'students.lifecycle', 'students.manage_guardians', 'students.documents', 'students.activity.view',
+  'students.promote', 'students.promote.approve',
   'classes.view', 'dormitories.view', 'academic_years.manage', 'terms.manage',
   'incidents.view', 'incidents.view_all', 'incidents.review', 'incidents.escalate', 'incidents.close',
   'marks.view', 'marks.adjust.approve', 'marks.reverse', 'risk.view', 'risk.manage', 'risk.escalate',
@@ -54,7 +56,8 @@ const deputy = [
   'reports.view', 'reports.export', 'analytics.view', 'calendar.view', 'calendar.manage',
   'notifications.view', 'notifications.manage', 'users.view',
   'students.view', 'students.view_all', 'students.update', 'students.import', 'students.export',
-  'students.promote', 'classes.view', 'dormitories.view',
+  'students.promote', 'students.restore', 'students.lifecycle', 'students.manage_guardians', 'students.documents',
+  'students.activity.view', 'classes.view', 'dormitories.view',
   'incidents.view', 'incidents.view_all', 'incidents.create', 'incidents.update', 'incidents.submit',
   'incidents.review', 'incidents.escalate', 'incidents.close', 'marks.view', 'marks.deduct', 'marks.reward',
   'marks.adjust.request', 'marks.adjust.approve', 'marks.reverse', 'risk.view', 'risk.manage', 'risk.escalate',
@@ -73,7 +76,7 @@ const teacher = [
   'incidents.update', 'incidents.submit', 'marks.view', 'marks.adjust.request', 'risk.view',
   'interventions.view', 'followups.view', 'followups.manage', 'recognition.view', 'recognition.create',
   'evidence.view', 'evidence.upload', 'policies.view', 'meetings.view', 'calendar.view',
-  'notifications.view', 'offences.view', 'letters.view',
+  'notifications.view', 'offences.view', 'letters.view', 'students.activity.view',
 ]
 
 const it = [
@@ -86,7 +89,7 @@ const patron = [
   'risk.view', 'interventions.view', 'interventions.manage', 'followups.view', 'followups.manage',
   'recognition.view', 'recognition.create', 'recognition.manage', 'safeguarding.view',
   'safeguarding.create', 'evidence.upload', 'policies.view', 'meetings.view', 'meetings.manage',
-  'calendar.view', 'calendar.manage', 'notifications.view', 'parents.view',
+  'calendar.view', 'calendar.manage', 'notifications.view', 'parents.view', 'students.activity.view',
 ]
 
 const matron = [
@@ -99,7 +102,8 @@ const matron = [
 const bursar = ['students.view', 'notifications.view', 'calendar.view', 'policies.view']
 
 const dos = [
-  'students.view', 'students.view_all', 'classes.view', 'dormitories.view', 'reports.view',
+  'students.view', 'students.view_all', 'students.promote', 'students.documents', 'students.activity.view',
+  'classes.view', 'dormitories.view', 'reports.view',
   'reports.export', 'analytics.view', 'incidents.view', 'incidents.view_all', 'marks.view', 'risk.view',
   'interventions.view', 'interventions.manage', 'followups.view', 'followups.manage', 'recognition.view',
   'recognition.manage', 'policies.view', 'meetings.view', 'meetings.manage', 'calendar.view',
@@ -112,7 +116,8 @@ const librarian = [
 ]
 
 const secretary = [
-  'students.view', 'students.update', 'parents.view', 'parents.manage', 'parent_contacts.view',
+  'students.view', 'students.update', 'students.manage_guardians', 'students.documents', 'students.activity.view',
+  'parents.view', 'parents.manage', 'parent_contacts.view',
   'parent_contacts.manage', 'letters.view', 'letters.create', 'letters.issue', 'meetings.view',
   'meetings.manage', 'calendar.view', 'calendar.manage', 'notifications.view', 'notifications.manage',
   'policies.view', 'reports.view', 'evidence.upload', 'students.export',

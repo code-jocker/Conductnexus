@@ -110,6 +110,7 @@ function HealthTab() {
   const integrations = [
     { key: 'MongoDB', ok: data.integrations.mongodb },
     { key: 'Email (SMTP)', ok: data.integrations.smtp },
+    { key: "WhatsApp gateway", ok: data.integrations.whatsappEnabled && data.integrations.whatsappConnected },
     { key: 'Firebase', ok: data.integrations.firebase },
     { key: 'WhatsApp', ok: data.integrations.whatsappConnected, hint: data.integrations.whatsappEnabled ? 'Enabled' : 'Disabled' },
   ]

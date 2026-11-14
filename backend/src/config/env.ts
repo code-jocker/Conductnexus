@@ -27,6 +27,14 @@ const envSchema = z.object({
   BACKUP_RETENTION_DAYS: z.coerce.number().default(30),
   ENABLE_WHATSAPP: bool,
   WHATSAPP_SESSION: z.string().default('conductnexus'),
+  WHATSAPP_EXECUTABLE_PATH: z.string().optional().default(''),
+  WHATSAPP_RESOLVER_IP: z.string().optional().default(''),
+  WHATSAPP_PAIR_PHONE: z.string().optional().default(''),
+  AT_USERNAME: z.string().optional().default(''),
+  AT_API_KEY: z.string().optional().default(''),
+  AT_SENDER_ID: z.string().optional().default(''),
+  AT_SMS_URL: z.string().optional().default(''),
+  EXPO_ACCESS_TOKEN: z.string().optional().default(''),
   UPLOAD_DIR: z.string().default('storage/evidence'),
   ADMIN_EMAIL: z.string().optional().default(''),
   ADMIN_PASSWORD: z.string().optional().default(''),
@@ -44,5 +52,6 @@ if (!parsed.success) {
 export const env = parsed.data
 export const isProd = env.NODE_ENV === 'production'
 export const smtpConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS)
+export const smsConfigured = Boolean(env.AT_USERNAME && env.AT_API_KEY)
 export const firebaseConfigured = Boolean(env.FIREBASE_PROJECT_ID)
 export const whatsappEnabled = env.ENABLE_WHATSAPP

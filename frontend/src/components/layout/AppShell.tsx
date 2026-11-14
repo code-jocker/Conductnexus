@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity,
+  ArrowUpRight,
   Award,
   Bell,
   BookOpenCheck,
@@ -53,6 +54,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     title: 'Discipline & care',
     items: [
       { to: '/students', label: 'nav.students', icon: GraduationCap, permission: 'students.view' },
+      { to: '/promotions', label: 'nav.promotions', icon: ArrowUpRight, permission: 'students.view' },
       { to: '/incidents', label: 'nav.incidents', icon: ClipboardList, permission: 'incidents.view' },
       {
         to: '/approvals',

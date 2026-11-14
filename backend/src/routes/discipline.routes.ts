@@ -21,7 +21,7 @@ import {
 } from '../services/incidents.service.js'
 import { requestAdjustment } from '../services/adjustments.service.js'
 import { decideApproval } from '../services/approvals.service.js'
-import { rewardStudent, reverseTransaction, studentConductSummary } from '../services/ledger.service.js'
+import { rewardStudent, reverseTransaction, studentConductSummary, reconcileLedger } from '../services/ledger.service.js'
 import { resolveTerm } from '../services/academic.service.js'
 import { assertStudentAccess } from '../services/rbac.service.js'
 import { writeAudit } from '../services/audit.service.js'
@@ -34,6 +34,8 @@ const incidentListQuery = paginationQuery.extend({
   status: z.string().trim().optional(),
   severity: z.enum(['minor', 'moderate', 'serious', 'critical']).optional(),
   studentId: objectId.optional(),
+  offenceId: objectId.optional(),
+  classId: objectId.optional(),
   termId: objectId.optional(),
   from: z.string().trim().optional(),
   to: z.string().trim().optional(),
@@ -50,6 +52,7 @@ const incidentBody = z.object({
     .max(10)
     .optional(),
   evidenceIds: z.array(objectId).max(20).optional(),
+  immediateAction: z.string().trim().max(1000).optional(),
   safeguardingFlag: z.boolean().optional(),
   clientSubmissionId: z.string().trim().max(80).optional(),
 })
@@ -150,6 +153,11 @@ router.get(
     if (q.status) filter.status = { $in: q.status.split(',') }
     if (q.severity) filter.severity = q.severity
     if (q.studentId) filter.studentId = new Types.ObjectId(q.studentId)
+    if (q.offenceId) filter.offenceId = new Types.ObjectId(q.offenceId)
+    if (q.classId) {
+      const classStudents = await Student.find({ classId: new Types.ObjectId(q.classId) }).select('_id').lean()
+      filter.studentId = { $in: classStudents.map((s) => s._id) }
+    }
     if (q.termId) filter.termId = new Types.ObjectId(q.termId)
     if (q.from || q.to) {
       filter.occurredAt = {
@@ -174,6 +182,7 @@ router.get(
         .skip(skip)
         .limit(pageSize)
         .populate('reportedBy', 'name')
+        .populate('review.reviewedBy', 'name position')
         .populate('studentId', 'fullName studentId classId currentBalance riskLevel')
         .lean(),
     ])
@@ -227,6 +236,34 @@ router.post(
 )
 
 router.post(
+  '/incidents/bulk-review',
+  requirePermission('incidents.review'),
+  validate({
+    body: z.object({
+      ids: z.array(objectId).min(1).max(50),
+      decision: z.enum(['approve', 'reject', 'request_info']),
+      comments: z.string().trim().max(2000).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const results: { id: string; ok: boolean; status?: string; error?: string }[] = []
+    for (const id of req.body.ids as string[]) {
+      try {
+        const incident = await reviewIncident(req.auth!, id, { decision: req.body.decision, comments: req.body.comments }, req)
+        results.push({ id, ok: true, status: incident.status })
+      } catch (err) {
+        results.push({ id, ok: false, error: err instanceof Error ? err.message : 'Review failed' })
+      }
+    }
+    ok(res, {
+      results,
+      reviewed: results.filter((result) => result.ok).length,
+      failed: results.filter((result) => !result.ok).length,
+    })
+  }),
+)
+
+router.post(
   '/incidents/:id/review',
   requirePermission('incidents.review'),
   validate({
@@ -250,6 +287,78 @@ router.post(
   }),
 )
 
+const sanctionTypes = ['warning', 'detention', 'community_service', 'suspension', 'expulsion_recommendation', 'counselling', 'other'] as const
+
+router.post(
+  '/incidents/:id/sanctions',
+  requirePermission('incidents.review'),
+  validate({
+    body: z.object({
+      title: z.string().trim().min(3).max(200),
+      type: z.enum(sanctionTypes).default('warning'),
+      details: z.string().trim().max(2000).optional(),
+      startDate: z.string().trim().optional(),
+      endDate: z.string().trim().optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const incident = await getIncidentForUser(req.auth!, req.params.id)
+    if (!['approved', 'resolved'].includes(incident.status)) {
+      throw ApiError.badRequest('Sanctions can only be recorded once the incident has been approved')
+    }
+    incident.sanctions.push({
+      title: req.body.title,
+      type: req.body.type,
+      details: req.body.details,
+      startDate: req.body.startDate ? new Date(req.body.startDate) : undefined,
+      endDate: req.body.endDate ? new Date(req.body.endDate) : undefined,
+      status: 'active',
+      issuedBy: new Types.ObjectId(req.auth!.userId),
+      issuedAt: new Date(),
+    })
+    incident.history.push({ at: new Date(), by: new Types.ObjectId(req.auth!.userId), action: 'sanction_issued', note: req.body.title })
+    await incident.save()
+    await writeAudit({
+      req,
+      actor: req.auth,
+      action: 'incident.sanction_issued',
+      resourceType: 'Incident',
+      resourceId: String(incident._id),
+      after: { title: req.body.title, type: req.body.type },
+    })
+    await incident.populate({ path: 'sanctions.issuedBy', select: 'name position' })
+    created(res, incident)
+  }),
+)
+
+router.patch(
+  '/incidents/:id/sanctions/:sanctionId',
+  requirePermission('incidents.review'),
+  validate({ body: z.object({ status: z.enum(['active', 'completed', 'cancelled']) }) }),
+  asyncHandler(async (req, res) => {
+    const incident = await getIncidentForUser(req.auth!, req.params.id)
+    const sanction = incident.sanctions.find((item) => String(item._id) === String(req.params.sanctionId))
+    if (!sanction) throw ApiError.notFound('Sanction not found')
+    sanction.status = req.body.status
+    incident.history.push({
+      at: new Date(),
+      by: new Types.ObjectId(req.auth!.userId),
+      action: `sanction_${req.body.status}`,
+      note: sanction.title,
+    })
+    await incident.save()
+    await writeAudit({
+      req,
+      actor: req.auth,
+      action: 'incident.sanction_updated',
+      resourceType: 'Incident',
+      resourceId: String(incident._id),
+      after: { sanction: String(sanction._id), status: req.body.status },
+    })
+    ok(res, incident)
+  }),
+)
+
 // ── Conduct ledger ─────────────────────────────────────────────────────────
 
 router.get(
@@ -265,6 +374,15 @@ router.get(
       term,
       ...(await studentConductSummary(String(student._id), String(term._id))),
     })
+  }),
+)
+
+router.get(
+  '/discipline/ledger/reconciliation',
+  requirePermission('reports.view'),
+  asyncHandler(async (req, res) => {
+    const term = await resolveTerm(req.query.termId as string | undefined)
+    ok(res, await reconcileLedger(String(term._id)))
   }),
 )
 

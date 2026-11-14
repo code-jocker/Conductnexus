@@ -25,6 +25,8 @@
 13. [Data protection (Rwanda)](#data-protection-rwanda)
 14. [Security notes](#security-notes)
 15. [Troubleshooting](#troubleshooting)
+16. [Cross-platform apps](#cross-platform-apps)
+17. [Documentation](#documentation)
 
 ---
 
@@ -54,6 +56,9 @@
 
 ### Experience
 - Mobile-first layouts: card lists on phones, full tables on desktop.
+- Installable PWA: web manifest, app-shell service worker, offline fallback page, in-app install and update prompts.
+- Offline-first incident drafting on web (IndexedDB) and mobile (SQLite) with idempotent sync over `clientSubmissionId`.
+- Native Android and iOS apps (Expo / React Native) sharing the same API and discipline rules — staff workflow plus consent-gated parent portal.
 - Light/dark themes with the ConductNexus navy/indigo + ochre identity.
 - Route-level code splitting, accessible navigation and keyboard-friendly tables.
 - Google Sign-In (Firebase), email verification and password reset codes/links.
@@ -75,12 +80,17 @@ conductnexus/
 │  │  ├─ docs/              OpenAPI 3 document
 │  │  └─ scripts/           setup, seed, demo seed, admin recovery
 │  └─ vitest.config.ts
-├─ frontend/                React 18 + Vite + Tailwind SPA
+├─ frontend/                React 18 + Vite + Tailwind SPA (installable PWA)
+│  ├─ public/               manifest, service worker, offline fallback, icons
 │  └─ src/
 │     ├─ pages/             dashboard, incidents, students, safeguarding, settings…
-│     ├─ components/        layout, UI primitives, charts
-│     ├─ lib/               API client, auth context, Firebase, types, utils
+│     ├─ components/        layout, UI primitives, charts, PWA banners
+│     ├─ lib/               API client, auth context, Firebase, offline store, types, utils
 │     └─ styles/
+├─ mobile/                  Expo / React Native app (Android + iOS)
+│  ├─ app/                  Expo Router routes: (auth), (staff), (parent), incident, student…
+│  └─ src/                  API client, native auth, SQLite drafts, push, theme
+├─ docs/                    API reference, security & privacy, deployment guide
 ├─ firebase.json            Firebase Hosting (SPA rewrites, caching, headers)
 ├─ .firebaserc              default project: e-visitors-d4830
 └─ render.yaml              Render blueprint for the API
@@ -91,6 +101,7 @@ conductnexus/
 | Layer | Technology |
 | --- | --- |
 | Frontend | React 18, TypeScript, Vite 6, Tailwind CSS 3, React Router 6, TanStack Query 5, Recharts, Socket.IO client, Firebase JS SDK |
+| Mobile | Expo SDK 58, React Native 0.88, Expo Router, TanStack Query, Expo SecureStore / SQLite / Notifications |
 | Backend | Node.js 20+, Express 4, TypeScript (ESM), Mongoose 8, Zod, JWT, Pino, Socket.IO, Swagger UI |
 | Data | MongoDB 7 (local or Atlas) |
 | Files | Local evidence storage (`backend/storage`) — use a Render disk or object storage in production |
@@ -178,6 +189,7 @@ Demo seeding refuses to run with `NODE_ENV=production`.
 | `BACKUP_SCHEDULE` | no | Cron expression (default `0 2 * * *`) |
 | `BACKUP_RETENTION_DAYS` | no | Backup retention (default `30`) |
 | `ENABLE_WHATSAPP`, `WHATSAPP_SESSION` | no | Optional WhatsApp worker |
+| `AT_USERNAME`, `AT_API_KEY`, `AT_SENDER_ID` | no | Africa's Talking SMS gateway. SMS is only sent when an administrator enables it in **Settings → Communications**; WhatsApp remains the default channel. |
 | `UPLOAD_DIR` | no | Evidence directory (default `storage/evidence`) |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | no | Only used by `npm run setup` / `npm run seed` |
 
@@ -273,12 +285,16 @@ This design makes every mark auditable and prevents silent edits.
 
 - Base path: `/api/v1`
 - Envelope: `{ "success": true, "data": …, "meta": … }` / `{ "success": false, "error": { "message", "details" } }`
-- Auth: `Authorization: Bearer <accessToken>`; refresh token in an HttpOnly cookie at `/api/v1/auth`
+- Auth: `Authorization: Bearer <accessToken>`; web refresh token in an HttpOnly cookie at `/api/v1/auth`. Native apps use `/api/v1/auth/native/*` with the refresh token in the response body (stored in the device secure store).
 - Interactive docs: `/api/docs` · Machine-readable: `/api/docs.json`
 - Health: `/api/v1/health`
 - Idempotency: mutating endpoints accept `Idempotency-Key`; incident drafts use `clientSubmissionId` for offline sync.
+- Integrity: `GET /api/v1/discipline/ledger/reconciliation` (permission `reports.view`) verifies every ledger chain, balance and duplicate deduction for a term.
+- Batch review: `POST /api/v1/incidents/bulk-review` (permission `incidents.review`) reviews 1–50 incidents and still enforces independent review per incident.
 
 Key groups: `auth`, `users`, `structure`, `students`, `discipline` (offences/incidents/marks), `risk`, `parents`, `communications` (queue, letters, templates), `approvals`, `safeguarding`, `investigations`, `appeals`, `evidence`, `policies`, `meetings`, `reports`, `portal`, `sync`, `admin` (settings, backups, audit, monitoring).
+
+Full endpoint reference: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md).
 
 ---
 
@@ -289,13 +305,14 @@ Key groups: `auth`, `users`, `structure`, `students`, `discipline` (offences/inc
 npm test
 ```
 
-The suite uses `conductnexus_test` and covers health/OpenAPI, authentication failures, RBAC denials, the incident lifecycle, self-review prevention and ledger balances.
+The suite uses `conductnexus_test` and covers health/OpenAPI, authentication failures, RBAC denials, the incident lifecycle, self-review prevention, ledger balances, ledger reconciliation (including a deliberately corrupted row), bulk review with independent-review enforcement, native sessions, device revocation and refresh-token reuse detection. **23 tests** run against a real MongoDB.
 
-Type-check only:
+Type-check all three apps:
 
 ```bash
 npm --prefix backend run typecheck
 npm --prefix frontend run typecheck
+npm --prefix mobile run typecheck
 ```
 
 ---
@@ -442,6 +459,39 @@ The school remains the data controller; conduct records are official education r
 | Backups missing | Free Render instances sleep; schedule a Render Cron Job or use an always-on instance |
 | Demo seed refused | It is disabled when `NODE_ENV=production` — run locally or in a development service |
 | Reset the admin | `npm --prefix backend run recover-admin` with database access |
+
+---
+
+## Cross-platform apps
+
+One backend, one MongoDB database and one set of discipline rules serve three clients.
+
+### Web (desktop, tablet, phone browsers)
+
+- Responsive SPA at `/` with card layouts below `md` and full tables above.
+- Installable PWA: open the site in Chrome/Edge/Safari and use the in-app **Install** prompt (or browser menu → *Install app*). `manifest.webmanifest` and `sw.js` are served with revalidation headers from `firebase.json`.
+- Offline behaviour: the app shell is cached; navigations fall back to `offline.html` when the network is unavailable. Incident drafts are stored in IndexedDB and sync when connectivity returns.
+- Updates: when a new service worker is detected the app shows a banner; applying it activates the new worker and reloads once.
+
+### Native Android + iOS (`mobile/`)
+
+- Expo SDK 58 / React Native with Expo Router. Staff tabs: Home, Incidents, Students, Tasks, More. Parent tabs: Children, Meetings, Notices, Account.
+- Native sessions (`/api/v1/auth/native/*`): refresh tokens live in SecureStore, every session is a device record that can be revoked, and biometric unlock is optional.
+- Offline drafts in SQLite with idempotent sync; safeguarding flags survive offline.
+- Expo push notifications bound to the signed-in device; permissions mirror the web (reporter cannot review their own incident, consent-aware parent messaging).
+- Setup, environment variables, EAS builds and store submission: [`mobile/README.md`](mobile/README.md).
+
+---
+
+## Documentation
+
+| Document | Purpose |
+| --- | --- |
+| [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | Endpoint groups, auth flows, envelopes, pagination, idempotency, offline sync |
+| [`docs/SECURITY_AND_PRIVACY.md`](docs/SECURITY_AND_PRIVACY.md) | Threat model, RBAC, session security, secrets, Rwanda data-protection controls |
+| [`docs/DEPLOYMENT_GUIDE.md`](docs/DEPLOYMENT_GUIDE.md) | Atlas, Render, Firebase Hosting, PWA headers, mobile builds, backups and rollback |
+| [`mobile/README.md`](mobile/README.md) | Expo app setup, environment, push, builds |
+| [`docs/CROSS_PLATFORM_REPOSITORY_AUDIT.md`](docs/CROSS_PLATFORM_REPOSITORY_AUDIT.md) | Production-readiness audit and gap analysis |
 
 ---
 

@@ -5,6 +5,7 @@ export type Language = 'en' | 'rw'
 const DICTIONARY: Record<string, { en: string; rw: string }> = {
   'nav.dashboard': { en: 'Dashboard', rw: 'Imbonerahamwe' },
   'nav.students': { en: 'Students', rw: 'Abanyeshuri' },
+  'nav.promotions': { en: 'Promotions', rw: 'Kuzamurwa mu byiciro' },
   'nav.incidents': { en: 'Incidents', rw: 'Ibikorwa bibi' },
   'nav.approvals': { en: 'Approvals', rw: 'Ibyemejwe' },
   'nav.discipline': { en: 'Conduct ledger', rw: 'Ibaruwa y’imyitwarire' },

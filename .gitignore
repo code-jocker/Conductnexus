@@ -14,6 +14,16 @@ playwright-report/
 test-results/
 *.tsbuildinfo
 
+# WhatsApp web session artifacts — contain linked-device credentials
+.wwebjs_cache/
+.wwebjs_auth/
+
+# Expo / React Native
+mobile/.expo/
+mobile/android/
+mobile/ios/
+mobile/dist/
+
 # Firebase / hosting
 .firebase/
 firebase-debug.log

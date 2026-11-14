@@ -105,6 +105,18 @@ export interface IIncident extends Document {
   status: IncidentStatus
   evidenceIds: Types.ObjectId[]
   witnesses: { name: string; contact?: string; statement?: string }[]
+  immediateAction?: string
+  sanctions: {
+    _id?: Types.ObjectId
+    title: string
+    type: 'warning' | 'detention' | 'community_service' | 'suspension' | 'expulsion_recommendation' | 'counselling' | 'other'
+    details?: string
+    startDate?: Date
+    endDate?: Date
+    status: 'active' | 'completed' | 'cancelled'
+    issuedBy?: Types.ObjectId
+    issuedAt: Date
+  }[]
   review: {
     reviewedBy?: Types.ObjectId
     reviewedAt?: Date
@@ -161,6 +173,23 @@ const incidentSchema = new Schema<IIncident>(
     },
     evidenceIds: [{ type: Schema.Types.ObjectId, ref: 'Evidence' }],
     witnesses: [{ name: String, contact: String, statement: String }],
+    immediateAction: { type: String, maxlength: 1000 },
+    sanctions: [
+      {
+        title: { type: String, required: true, maxlength: 200 },
+        type: {
+          type: String,
+          enum: ['warning', 'detention', 'community_service', 'suspension', 'expulsion_recommendation', 'counselling', 'other'],
+          default: 'warning',
+        },
+        details: { type: String, maxlength: 2000 },
+        startDate: Date,
+        endDate: Date,
+        status: { type: String, enum: ['active', 'completed', 'cancelled'], default: 'active' },
+        issuedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+        issuedAt: { type: Date, default: Date.now },
+      },
+    ],
     review: {
       reviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
       reviewedAt: Date,

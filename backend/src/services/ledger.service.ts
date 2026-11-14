@@ -204,8 +204,7 @@ export async function reverseTransaction(input: {
   })
 }
 
-export async function studentConductSummary(studentId: string, termId: string) {
-  const [student, ledger] = await Promise.all([
+export async function studentConductSummary(studentId: string, termId: string) {  const [student, ledger] = await Promise.all([
     Student.findById(studentId).lean(),
     DisciplineLedger.find({ studentId, termId }).sort({ createdAt: 1 }).lean(),
   ])
@@ -246,3 +245,124 @@ export async function allocateTermForAllStudents(term: { _id: Types.ObjectId; st
 
 export type { ISettings }
 export { getSettings }
+
+export type LedgerIssue = {
+  studentId: string
+  studentName: string
+  studentRef: string
+  ledgerId: string
+  kind: 'broken_chain' | 'math_mismatch' | 'balance_drift' | 'negative_balance' | 'duplicate_deduction'
+  detail: string
+}
+
+/**
+ * Walks every ledger row in posting order and proves that each row chains
+ * from the previous balance and that the final row matches the student's
+ * stored balance. Immutable rows are never repaired here; the report points
+ * an administrator at the exact record that needs an audit follow-up.
+ */
+export async function reconcileLedger(termId: string) {
+  const term = await Term.findById(termId).lean()
+  if (!term) throw ApiError.notFound('Term not found')
+
+  const [students, rows, duplicateDeductions] = await Promise.all([
+    Student.find({ status: 'active' }).select('fullName studentId currentBalance termId currentTermId').lean(),
+    DisciplineLedger.find({ termId }).sort({ studentId: 1, createdAt: 1, _id: 1 }).lean(),
+    DisciplineLedger.aggregate([
+      { $match: { termId: new Types.ObjectId(termId), type: 'deduction', incidentId: { $ne: null } } },
+      { $group: { _id: { incidentId: '$incidentId', studentId: '$studentId' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } },
+    ]),
+  ])
+
+  const byStudent = new Map<string, typeof rows>()
+  for (const row of rows) {
+    const key = String(row.studentId)
+    const list = byStudent.get(key) ?? []
+    list.push(row)
+    byStudent.set(key, list)
+  }
+  const studentMap = new Map(students.map((student) => [String(student._id), student]))
+  const issues: LedgerIssue[] = []
+  let checkedTransactions = 0
+  let matchedStudents = 0
+
+  for (const [studentKey, entries] of byStudent) {
+    const student = studentMap.get(studentKey)
+    if (!student) continue
+    let expectedPrevious = 0
+    let broken = false
+    for (const entry of entries) {
+      checkedTransactions += 1
+      if (entry.previousBalance !== expectedPrevious) {
+        broken = true
+        issues.push({
+          studentId: studentKey,
+          studentName: student.fullName,
+          studentRef: student.studentId,
+          ledgerId: String(entry._id),
+          kind: 'broken_chain',
+          detail: `Previous balance is ${entry.previousBalance} but the prior row ended at ${expectedPrevious}.`,
+        })
+      }
+      if (entry.previousBalance + entry.change !== entry.newBalance) {
+        issues.push({
+          studentId: studentKey,
+          studentName: student.fullName,
+          studentRef: student.studentId,
+          ledgerId: String(entry._id),
+          kind: 'math_mismatch',
+          detail: `${entry.previousBalance} ${entry.change >= 0 ? '+' : '−'} ${Math.abs(entry.change)} should equal ${entry.previousBalance + entry.change}, not ${entry.newBalance}.`,
+        })
+      }
+      if (entry.newBalance < 0) {
+        issues.push({
+          studentId: studentKey,
+          studentName: student.fullName,
+          studentRef: student.studentId,
+          ledgerId: String(entry._id),
+          kind: 'negative_balance',
+          detail: `Balance ${entry.newBalance} cannot be negative.`,
+        })
+      }
+      expectedPrevious = entry.newBalance
+    }
+    const last = entries[entries.length - 1]
+    const onCurrentTerm = String(student.currentTermId ?? student.termId ?? '') === String(termId)
+    if (last && onCurrentTerm && last.newBalance !== student.currentBalance) {
+      issues.push({
+        studentId: studentKey,
+        studentName: student.fullName,
+        studentRef: student.studentId,
+        ledgerId: String(last._id),
+        kind: 'balance_drift',
+        detail: `Ledger ends at ${last.newBalance} but the student record holds ${student.currentBalance}.`,
+      })
+    }
+    if (!broken) matchedStudents += 1
+  }
+
+  const namesById = new Map(students.map((student) => [String(student._id), student]))
+  for (const duplicate of duplicateDeductions as { _id: { incidentId: string; studentId: string }; count: number }[]) {
+    const student = namesById.get(String(duplicate._id.studentId))
+    issues.push({
+      studentId: String(duplicate._id.studentId),
+      studentName: student?.fullName ?? 'Unknown student',
+      studentRef: student?.studentId ?? '—',
+      ledgerId: String(duplicate._id.incidentId),
+      kind: 'duplicate_deduction',
+      detail: `${duplicate.count} deductions were posted for the same incident.`,
+    })
+  }
+
+  const activeWithLedger = [...byStudent.keys()].filter((key) => studentMap.has(key)).length
+  return {
+    term: { id: String(term._id), name: term.name, number: term.number },
+    studentsChecked: activeWithLedger,
+    studentsMatched: matchedStudents,
+    transactionsChecked: checkedTransactions,
+    issues,
+    healthy: issues.length === 0,
+    generatedAt: new Date(),
+  }
+}

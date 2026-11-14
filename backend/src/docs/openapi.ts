@@ -50,6 +50,15 @@ export const openApiDocument = {
         required: ['email', 'password'],
         properties: { email: { type: 'string', format: 'email' }, password: { type: 'string' } },
       },
+      DeviceInfo: {
+        type: 'object',
+        properties: {
+          deviceId: { type: 'string' },
+          deviceName: { type: 'string' },
+          platform: { type: 'string', enum: ['ios', 'android', 'web', 'unknown'] },
+          appVersion: { type: 'string' },
+        },
+      },
       Pagination: {
         type: 'object',
         properties: {
@@ -75,6 +84,60 @@ export const openApiDocument = {
     },
     '/auth/google': { post: { tags: ['Auth'], summary: 'Exchange a Firebase Google ID token for ConductNexus tokens', security: [] } },
     '/auth/refresh': { post: { tags: ['Auth'], summary: 'Rotate the refresh cookie and issue a new access token', security: [] } },
+    '/auth/native/login': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Sign in from the Expo app (refresh token returned in the body)',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                allOf: [
+                  { $ref: '#/components/schemas/LoginRequest' },
+                  { type: 'object', properties: { device: { $ref: '#/components/schemas/DeviceInfo' } } },
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+    '/auth/native/google': { post: { tags: ['Auth'], summary: 'Exchange a Firebase ID token from a native Google sign-in', security: [] } },
+    '/auth/native/refresh': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Rotate a native refresh token',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['refreshToken'],
+                properties: { refreshToken: { type: 'string' }, device: { $ref: '#/components/schemas/DeviceInfo' } },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/auth/native/logout': { post: { tags: ['Auth'], summary: 'Revoke a native refresh token', security: [] } },
+    '/auth/sessions': { get: { tags: ['Auth'], summary: 'List active sessions and devices for the signed-in user' } },
+    '/auth/sessions/{id}': {
+      delete: {
+        tags: ['Auth'],
+        summary: 'Sign out one of your sessions',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      },
+    },
+    '/auth/logout-others': { post: { tags: ['Auth'], summary: 'Sign out every other session' } },
+    '/auth/push-token': {
+      post: { tags: ['Auth'], summary: 'Register an Expo push token for this device' },
+      delete: { tags: ['Auth'], summary: 'Remove the push token from this device' },
+    },
     '/auth/logout': { post: { tags: ['Auth'], summary: 'Revoke the current refresh token' } },
     '/auth/me': { get: { tags: ['Auth'], summary: 'Current user, roles and permissions' } },
     '/auth/verify-email': { post: { tags: ['Auth'], summary: 'Verify an email address with a token', security: [] } },

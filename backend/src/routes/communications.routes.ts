@@ -15,9 +15,11 @@ import { Student } from '../models/school.js'
 import { createLetter, submitLetter, issueLetter, generateLetterPdf } from '../services/letters.service.js'
 import {
   processMessageQueue,
+  purgeNonWhatsappFailures,
   queueParentMessage,
   queueStatusCounts,
   refreshCommsSettings,
+  rerouteStrandedSms,
   retryMessage,
   startWhatsapp,
   stopWhatsapp,
@@ -125,10 +127,46 @@ router.post(
 )
 
 router.post(
+  '/notifications/queue/reroute-sms',
+  requirePermission('notifications.manage'),
+  asyncHandler(async (req, res) => {
+    await refreshCommsSettings()
+    const { rerouted, reason } = await rerouteStrandedSms(true)
+    const processed = rerouted > 0 ? await processMessageQueue(50) : { processed: 0, sent: 0, failed: 0 }
+    await writeAudit({
+      req,
+      actor: req.auth,
+      action: 'communication.queue_rerouted_whatsapp',
+      resourceType: 'MessageQueue',
+      resourceId: 'bulk',
+      after: { rerouted, ...processed },
+    })
+    ok(res, { rerouted, reason, ...processed })
+  }),
+)
+
+router.post(
   '/notifications/queue/:id/retry',
   requirePermission('notifications.manage'),
   asyncHandler(async (req, res) => {
     ok(res, await retryMessage(req.params.id))
+  }),
+)
+
+router.post(
+  '/notifications/queue/purge-non-whatsapp',
+  requirePermission('notifications.manage'),
+  asyncHandler(async (req, res) => {
+    const result = await purgeNonWhatsappFailures()
+    await writeAudit({
+      req,
+      actor: req.auth,
+      action: 'communication.queue_purged_non_whatsapp',
+      resourceType: 'MessageQueue',
+      resourceId: 'bulk',
+      after: result,
+    })
+    ok(res, result)
   }),
 )
 
@@ -394,8 +432,25 @@ router.get(
 router.post(
   '/whatsapp/connect',
   requirePermission('whatsapp.manage'),
-  asyncHandler(async (_req, res) => {
-    ok(res, await startWhatsapp())
+  validate({
+    body: z.object({
+      phoneNumber: z
+        .string()
+        .trim()
+        .regex(/^\+?\d{8,15}$/, 'Use digits only, including the country code (for example 2507XXXXXXXX)')
+        .optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const result = await startWhatsapp(req.body.phoneNumber)
+    await writeAudit({
+      req,
+      actor: req.auth,
+      action: 'whatsapp.connect_requested',
+      resourceType: 'WhatsappSession',
+      after: { mode: req.body.phoneNumber ? 'pairing_code' : 'qr', status: result.status },
+    })
+    ok(res, result)
   }),
 )
 

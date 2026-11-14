@@ -14,6 +14,7 @@ const draftSchema = z.object({
   description: z.string().trim().min(10).max(4000),
   occurredAt: z.string().trim().min(4),
   location: z.string().trim().max(160).default(''),
+  safeguardingFlag: z.boolean().optional(),
   clientSubmissionId: z.string().trim().min(4).max(120),
 })
 
@@ -50,6 +51,7 @@ syncRouter.post(
             description: draft.description,
             occurredAt: draft.occurredAt,
             location: draft.location,
+            safeguardingFlag: draft.safeguardingFlag,
             clientSubmissionId: draft.clientSubmissionId,
           },
           req,

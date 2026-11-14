@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express'
 import { ApiError } from '../shared/errors.js'
 import { getUserContext, hasPermission, hasRole, type AuthContext } from '../services/rbac.service.js'
 import { verifyAccessToken } from '../services/auth.service.js'
+import { assertSessionActive } from '../services/session.service.js'
 
 declare global {
   namespace Express {
@@ -17,8 +18,9 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
     const header = req.headers.authorization
     if (!header?.startsWith('Bearer ')) throw ApiError.unauthorized()
     const token = header.slice(7).trim()
-    const userId = verifyAccessToken(token)
-    req.auth = await getUserContext(userId)
+    const { userId, sessionId } = verifyAccessToken(token)
+    if (sessionId) await assertSessionActive(sessionId)
+    req.auth = { ...(await getUserContext(userId)), sessionId }
     next()
   } catch (err) {
     next(err)
@@ -29,8 +31,9 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
   try {
     const header = req.headers.authorization
     if (header?.startsWith('Bearer ')) {
-      const userId = verifyAccessToken(header.slice(7).trim())
-      req.auth = await getUserContext(userId)
+      const { userId, sessionId } = verifyAccessToken(header.slice(7).trim())
+      if (sessionId) await assertSessionActive(sessionId)
+      req.auth = { ...(await getUserContext(userId)), sessionId }
     }
   } catch {
     req.auth = undefined

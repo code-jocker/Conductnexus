@@ -148,6 +148,7 @@ export interface IAppeal extends Document {
   studentId: Types.ObjectId
   decisionType: 'incident' | 'suspension' | 'expulsion' | 'other'
   decisionRef: string
+  incidentId?: Types.ObjectId
   originalDecisionBy?: Types.ObjectId
   grounds: string
   reason: string
@@ -170,6 +171,7 @@ const appealSchema = new Schema<IAppeal>(
     studentId: { type: Schema.Types.ObjectId, ref: 'Student', required: true, index: true },
     decisionType: { type: String, enum: ['incident', 'suspension', 'expulsion', 'other'], default: 'incident' },
     decisionRef: { type: String, required: true },
+    incidentId: { type: Schema.Types.ObjectId, ref: 'Incident', index: true },
     originalDecisionBy: { type: Schema.Types.ObjectId, ref: 'User' },
     grounds: { type: String, required: true },
     reason: { type: String, required: true },

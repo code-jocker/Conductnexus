@@ -149,6 +149,7 @@ export interface IMessageQueue extends Document {
   maxAttempts: number
   nextAttemptAt: Date
   lastError?: string
+  leaseUntil?: Date
   dedupeKey?: string
   sentAt?: Date
   provider?: string
@@ -177,6 +178,7 @@ const messageSchema = new Schema<IMessageQueue>(
     maxAttempts: { type: Number, default: 3 },
     nextAttemptAt: { type: Date, default: Date.now, index: true },
     lastError: { type: String },
+    leaseUntil: { type: Date },
     dedupeKey: { type: String, unique: true, sparse: true },
     sentAt: { type: Date },
     provider: { type: String },
@@ -189,8 +191,10 @@ export const MessageQueue = model<IMessageQueue>('MessageQueue', messageSchema)
 
 export interface IWhatsappSession extends Document {
   sessionName: string
-  status: 'disabled' | 'not_installed' | 'initializing' | 'qr' | 'ready' | 'auth_failure' | 'failed' | 'disconnected'
+  status: 'disabled' | 'not_installed' | 'initializing' | 'pairing' | 'qr' | 'ready' | 'auth_failure' | 'failed' | 'disconnected'
   qrDataUrl?: string
+  pairingCode?: string
+  pairingPhone?: string
   lastQrAt?: Date
   lastConnectedAt?: Date
   lastError?: string
@@ -202,6 +206,8 @@ const whatsappSchema = new Schema<IWhatsappSession>(
     sessionName: { type: String, required: true, unique: true },
     status: { type: String, default: 'disconnected' },
     qrDataUrl: { type: String },
+    pairingCode: { type: String },
+    pairingPhone: { type: String },
     lastQrAt: { type: Date },
     lastConnectedAt: { type: Date },
     lastError: { type: String },

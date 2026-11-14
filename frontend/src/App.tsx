@@ -6,6 +6,7 @@ import { ThemeProvider } from './lib/theme'
 import { I18nProvider } from './lib/i18n'
 import { ToastProvider } from './components/toast'
 import { AppShell } from './components/layout/AppShell'
+import { PwaBanner } from './components/PwaBanner'
 import { LoadingBlock } from './components/ui'
 
 const LoginPage = lazy(() => import('./pages/auth/Login').then((m) => ({ default: m.LoginPage })))
@@ -17,6 +18,7 @@ const ChangePasswordPage = lazy(() => import('./pages/auth/ChangePassword').then
 const DashboardPage = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.DashboardPage })))
 const StudentsPage = lazy(() => import('./pages/Students').then((m) => ({ default: m.StudentsPage })))
 const StudentProfilePage = lazy(() => import('./pages/StudentProfile').then((m) => ({ default: m.StudentProfilePage })))
+const PromotionsPage = lazy(() => import('./pages/Promotions').then((m) => ({ default: m.PromotionsPage })))
 const IncidentsPage = lazy(() => import('./pages/Incidents').then((m) => ({ default: m.IncidentsPage })))
 const IncidentNewPage = lazy(() => import('./pages/IncidentNew').then((m) => ({ default: m.IncidentNewPage })))
 const IncidentDetailPage = lazy(() => import('./pages/IncidentDetail').then((m) => ({ default: m.IncidentDetailPage })))
@@ -26,6 +28,7 @@ const SafeguardingPage = lazy(() => import('./pages/Safeguarding').then((m) => (
 const InvestigationsPage = lazy(() => import('./pages/Investigations').then((m) => ({ default: m.InvestigationsPage })))
 const AppealsPage = lazy(() => import('./pages/Appeals').then((m) => ({ default: m.AppealsPage })))
 const EvidencePage = lazy(() => import('./pages/Evidence').then((m) => ({ default: m.EvidencePage })))
+const EvidenceCasePage = lazy(() => import('./pages/EvidenceCase').then((m) => ({ default: m.EvidenceCasePage })))
 const PoliciesPage = lazy(() => import('./pages/Policies').then((m) => ({ default: m.PoliciesPage })))
 const MeetingsPage = lazy(() => import('./pages/Meetings').then((m) => ({ default: m.MeetingsPage })))
 const CommunicationsPage = lazy(() => import('./pages/Communications').then((m) => ({ default: m.CommunicationsPage })))
@@ -117,9 +120,11 @@ export function App() {
                     <Route path="/profile" element={<ProfilePage />} />
                     <Route path="/students" element={<RequirePermission permission="students.view"><StudentsPage /></RequirePermission>} />
                     <Route path="/students/:id" element={<RequirePermission permission="students.view"><StudentProfilePage /></RequirePermission>} />
+                    <Route path="/promotions" element={<RequirePermission permission="students.view"><PromotionsPage /></RequirePermission>} />
                     <Route path="/incidents" element={<RequirePermission permission="incidents.view"><IncidentsPage /></RequirePermission>} />
                     <Route path="/incidents/new" element={<RequirePermission permission="incidents.create"><IncidentNewPage /></RequirePermission>} />
                     <Route path="/incidents/:id" element={<RequirePermission permission="incidents.view"><IncidentDetailPage /></RequirePermission>} />
+                    <Route path="/incidents/:id/evidence" element={<RequirePermission permission="evidence.view"><EvidenceCasePage /></RequirePermission>} />
                     <Route path="/approvals" element={<ApprovalsPage />} />
                     <Route path="/risk" element={<RequirePermission permission="risk.view"><RiskPage /></RequirePermission>} />
                     <Route path="/safeguarding" element={<RequirePermission permission="safeguarding.view"><SafeguardingPage /></RequirePermission>} />
@@ -142,6 +147,7 @@ export function App() {
                   </Route>
                   </Routes>
                 </Suspense>
+                <PwaBanner />
               </BrowserRouter>
             </AuthProvider>
           </ToastProvider>

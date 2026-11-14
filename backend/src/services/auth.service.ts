@@ -3,10 +3,11 @@ import jwt, { type SignOptions } from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { Types } from 'mongoose'
 import { env, firebaseConfigured, isProd, smtpConfigured } from '../config/env.js'
-import { Session, User, getSettings, type IUser } from '../models/core.js'
+import { Session, User, getSettings, type IUser, type SessionPlatform } from '../models/core.js'
 import { ApiError } from '../shared/errors.js'
 import { addDays, addMinutes, normalizeRwandaPhone, randomCode, randomToken, sha256 } from '../shared/utils.js'
-import { getUserContext, type AuthContext } from './rbac.service.js'
+import { getUserContext, invalidateUserAccess, type AuthContext } from './rbac.service.js'
+import { clearSessionCache } from './session.service.js'
 import { resetEmail, sendMail, verificationEmail } from './email.service.js'
 import { logger } from '../shared/logger.js'
 
@@ -29,34 +30,59 @@ export type TokenPair = {
   accessToken: string
   refreshToken: string
   refreshExpires: Date
+  sessionId?: string
 }
 
-export async function issueTokens(
-  user: IUser,
-  meta: { ip?: string; userAgent?: string; refreshDays?: number } = {},
-): Promise<TokenPair> {
+export type ClientMeta = {
+  ip?: string
+  userAgent?: string
+  deviceId?: string
+  deviceName?: string
+  platform?: SessionPlatform
+  appVersion?: string
+  refreshDays?: number
+}
+
+function signAccessToken(userId: Types.ObjectId | string, sessionId: Types.ObjectId | string): string {
+  return jwt.sign(
+    { sub: String(userId), sid: String(sessionId), typ: 'access' },
+    env.JWT_ACCESS_SECRET,
+    { expiresIn: env.ACCESS_TOKEN_TTL as SignOptions['expiresIn'] },
+  )
+}
+
+export async function issueTokens(user: IUser, meta: ClientMeta = {}): Promise<TokenPair> {
   const settings = await getSettings()
   const refreshDays = meta.refreshDays ?? settings.security.sessionDays ?? env.REFRESH_TOKEN_TTL_DAYS
-  const accessToken = jwt.sign({ sub: String(user._id), typ: 'access' }, env.JWT_ACCESS_SECRET, {
-    expiresIn: env.ACCESS_TOKEN_TTL as SignOptions['expiresIn'],
-  })
   const refreshToken = randomToken(48)
   const refreshExpires = addDays(new Date(), refreshDays)
-  await Session.create({
+  const session = await Session.create({
     userId: user._id,
     tokenHash: sha256(refreshToken),
     expiresAt: refreshExpires,
     ip: meta.ip,
     userAgent: meta.userAgent,
+    deviceId: meta.deviceId,
+    deviceName: meta.deviceName,
+    platform: meta.platform ?? 'web',
+    appVersion: meta.appVersion,
+    lastActiveAt: new Date(),
   })
-  return { accessToken, refreshToken, refreshExpires }
+  return {
+    accessToken: signAccessToken(user._id, session._id),
+    refreshToken,
+    refreshExpires,
+    sessionId: String(session._id),
+  }
 }
 
-export function verifyAccessToken(token: string): string {
+export type AccessClaims = { userId: string; sessionId?: string }
+
+export function verifyAccessToken(token: string): AccessClaims {
   try {
-    const payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as { sub?: string; typ?: string }
+    const payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as { sub?: string; sid?: string; typ?: string }
     if (!payload.sub || payload.typ !== 'access') throw new Error('invalid token')
-    return payload.sub
+    return { userId: payload.sub, sessionId: payload.sid }
   } catch {
     throw ApiError.unauthorized('Your session has expired. Please sign in again.')
   }
@@ -65,9 +91,7 @@ export function verifyAccessToken(token: string): string {
 export async function loginWithPassword(input: {
   email: string
   password: string
-  ip?: string
-  userAgent?: string
-}): Promise<{ tokens: TokenPair; ctx: AuthContext }> {
+} & ClientMeta): Promise<{ tokens: TokenPair; ctx: AuthContext }> {
   const settings = await getSettings()
   const email = input.email.trim().toLowerCase()
   const user = await User.findOne({ email }).select('+passwordHash')
@@ -93,7 +117,7 @@ export async function loginWithPassword(input: {
   user.lockUntil = undefined
   user.lastLoginAt = new Date()
   await user.save()
-  const tokens = await issueTokens(user, { ip: input.ip, userAgent: input.userAgent })
+  const tokens = await issueTokens(user, input)
   const ctx = await getUserContext(user._id)
   return { tokens, ctx }
 }
@@ -154,9 +178,7 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<GoogleIden
 
 export async function loginWithGoogle(input: {
   idToken: string
-  ip?: string
-  userAgent?: string
-}): Promise<{ tokens: TokenPair; ctx: AuthContext; isNew: boolean; hasAccess: boolean }> {
+} & ClientMeta): Promise<{ tokens: TokenPair; ctx: AuthContext; isNew: boolean; hasAccess: boolean }> {
   const identity = await verifyFirebaseIdToken(input.idToken)
   let user = await User.findOne({
     $or: [{ googleUid: identity.uid }, { email: identity.email }],
@@ -185,27 +207,28 @@ export async function loginWithGoogle(input: {
     })
   }
 
-  const tokens = await issueTokens(user, { ip: input.ip, userAgent: input.userAgent })
+  const tokens = await issueTokens(user, input)
   const ctx = await getUserContext(user._id)
   return { tokens, ctx, isNew, hasAccess: ctx.roles.length > 0 }
 }
 
 export async function rotateRefreshToken(input: {
   token?: string
-  ip?: string
-  userAgent?: string
-}): Promise<{ tokens: TokenPair; ctx: AuthContext }> {
+} & ClientMeta): Promise<{ tokens: TokenPair; ctx: AuthContext }> {
   if (!input.token) throw ApiError.unauthorized('No active session')
   const tokenHash = sha256(input.token)
   const session = await Session.findOne({ tokenHash })
   if (!session) throw ApiError.unauthorized('Session not found. Please sign in again.')
   if (session.revokedAt) {
-    await Session.updateMany({ userId: session.userId, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } })
+    await Session.updateMany({ userId: session.userId, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date(), revokedReason: 'token_reuse' } })
+    clearSessionCache()
     throw ApiError.unauthorized('Session reuse detected. All sessions have been revoked.')
   }
   if (session.expiresAt < new Date()) {
     session.revokedAt = new Date()
+    session.revokedReason = 'expired'
     await session.save()
+    clearSessionCache(String(session._id))
     throw ApiError.unauthorized('Session expired. Please sign in again.')
   }
   const user = await User.findById(session.userId)
@@ -214,29 +237,48 @@ export async function rotateRefreshToken(input: {
   const refreshToken = randomToken(48)
   const refreshExpires = session.expiresAt
   session.revokedAt = new Date()
+  session.revokedReason = 'rotated'
   session.replacedByHash = sha256(refreshToken)
   await session.save()
-  await Session.create({
+  const replacement = await Session.create({
     userId: user._id,
     tokenHash: session.replacedByHash,
     expiresAt: refreshExpires,
-    ip: input.ip,
-    userAgent: input.userAgent,
+    ip: input.ip ?? session.ip,
+    userAgent: input.userAgent ?? session.userAgent,
+    deviceId: input.deviceId ?? session.deviceId,
+    deviceName: input.deviceName ?? session.deviceName,
+    platform: input.platform ?? session.platform,
+    appVersion: input.appVersion ?? session.appVersion,
+    pushToken: session.pushToken,
+    lastActiveAt: new Date(),
   })
-  const accessToken = jwt.sign({ sub: String(user._id), typ: 'access' }, env.JWT_ACCESS_SECRET, {
-    expiresIn: env.ACCESS_TOKEN_TTL as SignOptions['expiresIn'],
-  })
-  const ctx = await getUserContext(user._id)
-  return { tokens: { accessToken, refreshToken, refreshExpires }, ctx }
+  clearSessionCache(String(session._id))
+  return {
+    tokens: {
+      accessToken: signAccessToken(user._id, replacement._id),
+      refreshToken,
+      refreshExpires,
+      sessionId: String(replacement._id),
+    },
+    ctx: await getUserContext(user._id),
+  }
 }
 
 export async function revokeRefreshToken(token?: string): Promise<void> {
   if (!token) return
-  await Session.updateOne({ tokenHash: sha256(token), revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } })
+  const session = await Session.findOneAndUpdate(
+    { tokenHash: sha256(token), revokedAt: { $exists: false } },
+    { $set: { revokedAt: new Date(), revokedReason: 'signed_out' } },
+  )
+  if (session) clearSessionCache(String(session._id))
 }
 
-export async function revokeAllSessions(userId: string | Types.ObjectId): Promise<void> {
-  await Session.updateMany({ userId, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } })
+export async function revokeAllSessions(userId: string | Types.ObjectId, exceptSessionId?: string): Promise<void> {
+  const filter: Record<string, unknown> = { userId, revokedAt: { $exists: false } }
+  if (exceptSessionId) filter._id = { $ne: exceptSessionId }
+  await Session.updateMany(filter, { $set: { revokedAt: new Date(), revokedReason: 'revoked_all' } })
+  clearSessionCache()
 }
 
 export function refreshCookieOptions(expires: Date) {
@@ -347,7 +389,12 @@ export async function resetPassword(input: {
   })
 }
 
-export async function changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+export async function changePassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+  keepSessionId?: string,
+): Promise<void> {
   if (!passwordSchema(newPassword)) {
     throw ApiError.unprocessable('Password must be at least 10 characters and include uppercase, lowercase and a number.')
   }
@@ -363,6 +410,8 @@ export async function changePassword(userId: string, currentPassword: string, ne
   user.passwordHash = await hashPassword(newPassword)
   user.mustChangePassword = false
   await user.save()
+  invalidateUserAccess(String(user._id))
+  await revokeAllSessions(user._id, keepSessionId)
   await sendMail({
     to: user.email,
     subject: 'Your ConductNexus password was changed',

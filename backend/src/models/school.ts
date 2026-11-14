@@ -111,7 +111,7 @@ const termSchema = new Schema<ITerm>(
 termSchema.index({ academicYearId: 1, number: 1 }, { unique: true })
 export const Term = model<ITerm>('Term', termSchema)
 
-export type StudentStatus = 'active' | 'suspended' | 'transferred' | 'graduated' | 'expelled' | 'archived'
+export type StudentStatus = 'active' | 'suspended' | 'transferred' | 'withdrawn' | 'graduated' | 'expelled' | 'archived'
 
 export interface IStudent extends Document {
   studentId: string
@@ -122,15 +122,33 @@ export interface IStudent extends Document {
   fullName: string
   gender: 'male' | 'female'
   dateOfBirth?: Date
+  nationality?: string
+  nationalId?: string
+  religion?: string
+  bloodGroup?: string
   photoUrl?: string
+  contact?: { phone?: string; email?: string; address?: string }
+  customFields: { label: string; value: string }[]
   classId: Types.ObjectId
   streamId?: Types.ObjectId | null
   dormitoryId?: Types.ObjectId | null
+  classTeacherId?: Types.ObjectId | null
   academicYearId?: Types.ObjectId | null
   termId?: Types.ObjectId | null
   currentTermId?: Types.ObjectId | null
   status: StudentStatus
+  previousStatus?: StudentStatus
   admissionDate: Date
+  admissionType?: 'new' | 'transfer' | 'reentry' | 'other'
+  previousSchool?: string
+  previousClass?: string
+  boardingStatus?: 'day' | 'boarding'
+  roomNumber?: string
+  emergencyContact?: { name?: string; relationship?: string; phone?: string }
+  medicalNotes?: string
+  documents: { title: string; type: string; url?: string; notes?: string; uploadedBy?: Types.ObjectId; uploadedAt: Date }[]
+  archivedAt?: Date
+  archivedReason?: string
   currentBalance: number
   balanceVersion: number
   riskLevel: 'green' | 'yellow' | 'orange' | 'red'
@@ -161,20 +179,56 @@ const studentSchema = new Schema<IStudent>(
     fullName: { type: String, required: true, trim: true },
     gender: { type: String, enum: ['male', 'female'], required: true },
     dateOfBirth: { type: Date },
+    nationality: { type: String, trim: true },
+    nationalId: { type: String, trim: true },
+    religion: { type: String, trim: true },
+    bloodGroup: { type: String, trim: true },
     photoUrl: { type: String },
+    contact: { phone: String, email: String, address: String },
+    customFields: [
+      {
+        _id: false,
+        label: { type: String, required: true, trim: true, maxlength: 60 },
+        value: { type: String, default: '', trim: true, maxlength: 500 },
+      },
+    ],
     classId: { type: Schema.Types.ObjectId, ref: 'Class', required: true, index: true },
     streamId: { type: Schema.Types.ObjectId, ref: 'Stream', default: null },
     dormitoryId: { type: Schema.Types.ObjectId, ref: 'Dormitory', default: null, index: true },
+    classTeacherId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     academicYearId: { type: Schema.Types.ObjectId, ref: 'AcademicYear', default: null },
     termId: { type: Schema.Types.ObjectId, ref: 'Term', default: null },
     currentTermId: { type: Schema.Types.ObjectId, ref: 'Term', default: null },
     status: {
       type: String,
-      enum: ['active', 'suspended', 'transferred', 'graduated', 'expelled', 'archived'],
+      enum: ['active', 'suspended', 'transferred', 'withdrawn', 'graduated', 'expelled', 'archived'],
       default: 'active',
       index: true,
     },
+    previousStatus: {
+      type: String,
+      enum: ['active', 'suspended', 'transferred', 'withdrawn', 'graduated', 'expelled', 'archived'],
+    },
     admissionDate: { type: Date, default: Date.now },
+    admissionType: { type: String, enum: ['new', 'transfer', 'reentry', 'other'], default: 'new' },
+    previousSchool: { type: String, trim: true },
+    previousClass: { type: String, trim: true },
+    boardingStatus: { type: String, enum: ['day', 'boarding'], default: 'day' },
+    roomNumber: { type: String, trim: true },
+    emergencyContact: { name: String, relationship: String, phone: String },
+    medicalNotes: { type: String },
+    documents: [
+      {
+        title: { type: String, required: true },
+        type: { type: String, default: 'other' },
+        url: String,
+        notes: String,
+        uploadedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
+    archivedAt: { type: Date },
+    archivedReason: { type: String },
     currentBalance: { type: Number, default: 40 },
     balanceVersion: { type: Number, default: 0 },
     riskLevel: { type: String, enum: ['green', 'yellow', 'orange', 'red'], default: 'green', index: true },
@@ -207,11 +261,16 @@ export interface IParent extends Document {
   phone: string
   altPhone?: string
   email?: string
+  address?: string
+  occupation?: string
+  nationalId?: string
   preferredChannel: 'whatsapp' | 'sms' | 'email' | 'call'
   whatsappConsent: boolean
   smsConsent: boolean
   emailConsent: boolean
   verificationStatus: 'unverified' | 'verified'
+  verifiedAt?: Date
+  verifiedBy?: Types.ObjectId
   portalUserId?: Types.ObjectId
   notes?: string
   createdBy?: Types.ObjectId
@@ -224,11 +283,16 @@ const parentSchema = new Schema<IParent>(
     phone: { type: String, required: true, trim: true, index: true },
     altPhone: { type: String, trim: true },
     email: { type: String, lowercase: true, trim: true },
-    preferredChannel: { type: String, enum: ['whatsapp', 'sms', 'email', 'call'], default: 'sms' },
+    address: { type: String, trim: true },
+    occupation: { type: String, trim: true },
+    nationalId: { type: String, trim: true },
+    preferredChannel: { type: String, enum: ['whatsapp', 'sms', 'email', 'call'], default: 'whatsapp' },
     whatsappConsent: { type: Boolean, default: false },
     smsConsent: { type: Boolean, default: false },
     emailConsent: { type: Boolean, default: false },
     verificationStatus: { type: String, enum: ['unverified', 'verified'], default: 'unverified' },
+    verifiedAt: { type: Date },
+    verifiedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     portalUserId: { type: Schema.Types.ObjectId, ref: 'User', sparse: true },
     notes: { type: String },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -242,6 +306,8 @@ export interface IGuardianLink extends Document {
   parentId: Types.ObjectId
   relationship: string
   isPrimary: boolean
+  isEmergencyContact: boolean
+  notes?: string
 }
 
 const guardianSchema = new Schema<IGuardianLink>(
@@ -250,6 +316,8 @@ const guardianSchema = new Schema<IGuardianLink>(
     parentId: { type: Schema.Types.ObjectId, ref: 'Parent', required: true, index: true },
     relationship: { type: String, default: 'Guardian' },
     isPrimary: { type: Boolean, default: false },
+    isEmergencyContact: { type: Boolean, default: false },
+    notes: { type: String },
   },
   { timestamps: true },
 )

@@ -60,7 +60,7 @@ router.post(
       phone: z.string().trim().min(9),
       altPhone: z.string().trim().optional(),
       email: z.string().email().optional().or(z.literal('')),
-      preferredChannel: z.enum(['whatsapp', 'sms', 'email', 'call']).optional().default('sms'),
+      preferredChannel: z.enum(['whatsapp', 'sms', 'email', 'call']).optional().default('whatsapp'),
       whatsappConsent: z.boolean().optional().default(false),
       smsConsent: z.boolean().optional().default(false),
       emailConsent: z.boolean().optional().default(false),

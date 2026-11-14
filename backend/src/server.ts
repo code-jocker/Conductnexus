@@ -6,6 +6,7 @@ import { env } from './config/env.js'
 import { connectDatabase, disconnectDatabase } from './config/db.js'
 import { logger } from './shared/logger.js'
 import { verifyAccessToken } from './services/auth.service.js'
+import { assertSessionActive } from './services/session.service.js'
 import { setSocketServer, feedRoom } from './services/notification.service.js'
 import { refreshCommsSettings, processMessageQueue, startWhatsapp, stopWhatsapp } from './services/communication.service.js'
 import { startBackupSchedule } from './services/backup.service.js'
@@ -33,7 +34,17 @@ async function main() {
       (typeof socket.handshake.query.token === 'string' ? socket.handshake.query.token : undefined)
     if (!token) return next(new Error('Authentication required'))
     try {
-      const userId = verifyAccessToken(token)
+      const { userId, sessionId } = verifyAccessToken(token)
+      if (sessionId) {
+        assertSessionActive(sessionId)
+          .then(() => {
+            socket.data.userId = userId
+            socket.data.sessionId = sessionId
+            next()
+          })
+          .catch(() => next(new Error('Authentication failed')))
+        return
+      }
       socket.data.userId = userId
       return next()
     } catch {

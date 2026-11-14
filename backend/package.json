@@ -10,6 +10,14 @@
     "start": "node dist/server.js",
     "seed": "tsx src/scripts/seed.ts",
     "seed:demo": "tsx src/scripts/seed-demo.ts",
+    "cleanup:demo": "tsx src/scripts/cleanup-demo.ts",
+    "purge:queue": "tsx src/scripts/purge-non-whatsapp-queue.ts",
+    "queue:status": "tsx src/scripts/queue-status.ts",
+    "rbac:sync": "tsx src/scripts/sync-rbac.ts",
+    "smoke:students": "tsx src/scripts/smoke-student-upgrade.ts",
+    "smoke:password": "tsx src/scripts/smoke-password.ts",
+    "clean:smoke": "tsx src/scripts/clean-smoke.ts",
+    "resend:incidents": "tsx src/scripts/resend-incident-messages.ts",
     "recover-admin": "tsx src/scripts/recover-admin.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -37,6 +45,7 @@
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.1",
     "swagger-ui-express": "^5.0.1",
+    "whatsapp-web.js": "^1.34.8",
     "zod": "^3.24.1"
   },
   "devDependencies": {

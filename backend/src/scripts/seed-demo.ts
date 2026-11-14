@@ -13,6 +13,7 @@ import { evaluateStudentRisk } from '../services/risk.service.js'
 import { seedAdminFromEnv, seedRbac, seedSchoolDefaults } from '../services/seed.service.js'
 import { hashPassword } from '../services/auth.service.js'
 import { logger } from '../shared/logger.js'
+import { Counter } from '../shared/refs.js'
 
 const PASSWORD = 'Demo@2026!'
 
@@ -109,7 +110,8 @@ async function main() {
           relationship: 'Guardian',
           phone: `+25078${String(1000000 + i)}`,
           email: i < 3 ? `guardian${i + 1}@example.rw` : undefined,
-          preferredChannel: 'sms',
+          preferredChannel: 'whatsapp',
+          whatsappConsent: true,
           smsConsent: true,
           portalUserId: i < 2 ? parentUser._id : undefined,
           createdBy: admin._id,
@@ -118,6 +120,23 @@ async function main() {
       }
     }
     logger.info('Demo students created')
+  }
+
+  // Seeded students use fixed IDs, so advance the counters past them to avoid new collisions.
+  const yearPrefix = year.name.slice(0, 4)
+  const seqOf = (ref?: string) => Number(ref?.split('-').pop() ?? 0) || 0
+  const lastStudent = await Student.findOne({ studentId: new RegExp(`^STD-${yearPrefix}-`) })
+    .sort({ studentId: -1 })
+    .select('studentId')
+    .lean()
+  const lastAdmission = await Student.findOne({ admissionNumber: new RegExp(`^ADM-${yearPrefix}-`) })
+    .sort({ admissionNumber: -1 })
+    .select('admissionNumber')
+    .lean()
+  const seededSeq = Math.max(seqOf(lastStudent?.studentId), seqOf(lastAdmission?.admissionNumber))
+  if (seededSeq > 0) {
+    await Counter.updateOne({ key: `STD-${yearPrefix}` }, { $max: { seq: seededSeq } }, { upsert: true })
+    await Counter.updateOne({ key: `ADM-${yearPrefix}` }, { $max: { seq: seededSeq } }, { upsert: true })
   }
 
   const settingsAfter = await getSettings()

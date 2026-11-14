@@ -118,7 +118,7 @@ export function inviteEmail(name: string, link: string, temporaryPassword?: stri
        ${temporaryPassword ? `<p>Temporary password: <strong style="font-family:Consolas,monospace">${temporaryPassword}</strong></p>` : ''}
        <p>You can sign in with your email and password, or use Google Sign-In with this same email address.</p>
        <p style="margin:22px 0"><a href="${link}" style="background:#2563eb;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">Open ConductNexus</a></p>
-       <p style="font-size:12px;color:#64748b">Please change your password after your first sign-in.</p>`,
+        <p style="font-size:12px;color:#64748b">Please change your password after your first sign-in.</p>`,
     ),
   }
 }

@@ -206,3 +206,357 @@ describe('incident workflow and conduct ledger', () => {
     expect(deduction?.newBalance).toBe(38)
   })
 })
+
+describe('ledger reconciliation and bulk review', () => {
+  async function createSubmittedIncident(email: string) {
+    const created = await request(app)
+      .post('/api/v1/incidents')
+      .set(auth(email))
+      .send({
+        studentId,
+        offenceId,
+        description: 'Used a phone during evening prep without permission.',
+        occurredAt: new Date().toISOString(),
+        location: 'Study hall',
+      })
+    expect(created.status).toBe(201)
+    const submitted = await request(app)
+      .post(`/api/v1/incidents/${created.body.data._id}/submit`)
+      .set(auth(email))
+    expect(submitted.status).toBe(200)
+    return String(created.body.data._id)
+  }
+
+  it('reconciles the conduct ledger without reporting issues', async () => {
+    const res = await request(app)
+      .get('/api/v1/discipline/ledger/reconciliation')
+      .set(auth('headteacher@test.rw'))
+    expect(res.status).toBe(200)
+    expect(res.body.data.healthy).toBe(true)
+    expect(res.body.data.studentsChecked).toBeGreaterThanOrEqual(1)
+    expect(res.body.data.issues).toEqual([])
+  })
+
+  it('denies reconciliation to a role without reports.view', async () => {
+    const res = await request(app)
+      .get('/api/v1/discipline/ledger/reconciliation')
+      .set(auth('parent@test.rw'))
+    expect(res.status).toBe(403)
+  })
+
+  it('bulk-reviews incidents while still enforcing independent review', async () => {
+    await createUser('deputy@test.rw', 'Test Deputy', 'DEPUTY_DISCIPLINE')
+    await login('deputy@test.rw')
+
+    const deputyIncidentIds = [await createSubmittedIncident('deputy@test.rw'), await createSubmittedIncident('deputy@test.rw')]
+    const adminIncidentId = await createSubmittedIncident('admin@test.rw')
+
+    const res = await request(app)
+      .post('/api/v1/incidents/bulk-review')
+      .set(auth('deputy@test.rw'))
+      .send({ ids: [...deputyIncidentIds, adminIncidentId], decision: 'approve', comments: 'Batch confirmed during leadership review.' })
+    expect(res.status).toBe(200)
+    expect(res.body.data.reviewed).toBe(1)
+    expect(res.body.data.failed).toBe(2)
+
+    const selfReviews = res.body.data.results.filter((result: { id: string }) => deputyIncidentIds.includes(result.id))
+    expect(selfReviews.every((result: { ok: boolean }) => !result.ok)).toBe(true)
+
+    const student = await Student.findById(studentId).lean()
+    expect(student?.currentBalance).toBe(36)
+  })
+
+  it('refuses bulk review without the review permission', async () => {
+    const res = await request(app)
+      .post('/api/v1/incidents/bulk-review')
+      .set(auth('teacher@test.rw'))
+      .send({ ids: [new mongoose.Types.ObjectId().toString()], decision: 'approve' })
+    expect(res.status).toBe(403)
+  })
+
+  it('detects an intentionally corrupted ledger row', async () => {
+    const collection = mongoose.connection.collection('disciplineledgers')
+    const row = await collection.findOne({ studentId: new mongoose.Types.ObjectId(studentId) })
+    expect(row).toBeTruthy()
+    await collection.updateOne({ _id: row!._id }, { $set: { newBalance: 999 } })
+
+    const res = await request(app)
+      .get('/api/v1/discipline/ledger/reconciliation')
+      .set(auth('headteacher@test.rw'))
+    expect(res.status).toBe(200)
+    expect(res.body.data.healthy).toBe(false)
+    expect(res.body.data.issues.length).toBeGreaterThan(0)
+
+    await collection.updateOne({ _id: row!._id }, { $set: { newBalance: row!.newBalance } })
+  })
+})
+
+describe('native sessions, devices and revocation', () => {
+  const deviceA = {
+    deviceId: 'test-device-a',
+    deviceName: 'Pixel 8',
+    platform: 'android' as const,
+    appVersion: '1.0.0',
+  }
+  const deviceB = {
+    deviceId: 'test-device-b',
+    deviceName: 'iPhone 15',
+    platform: 'ios' as const,
+    appVersion: '1.0.0',
+  }
+  let accessA = ''
+  let sessionA = ''
+  let accessB = ''
+  let refreshB = ''
+  let sessionB = ''
+
+  async function nativeLogin(email: string, device: typeof deviceA) {
+    const res = await request(app).post('/api/v1/auth/native/login').send({ email, password: PASSWORD, device })
+    expect(res.status).toBe(200)
+    return res.body.data as { accessToken: string; refreshToken: string; sessionId: string }
+  }
+
+  it('signs in natively without setting a refresh cookie', async () => {
+    const res = await request(app)
+      .post('/api/v1/auth/native/login')
+      .send({ email: 'admin@test.rw', password: PASSWORD, device: deviceA })
+    expect(res.status).toBe(200)
+    expect(res.body.data.accessToken).toBeTruthy()
+    expect(res.body.data.refreshToken).toBeTruthy()
+    expect(res.body.data.sessionId).toBeTruthy()
+    const cookies = res.headers['set-cookie'] as unknown as string[] | undefined
+    expect(cookies?.some((c) => c.includes('cn_refresh'))).toBeFalsy()
+    accessA = res.body.data.accessToken
+    sessionA = res.body.data.sessionId
+  })
+
+  it('lists the native session with device metadata', async () => {
+    const res = await request(app).get('/api/v1/auth/sessions').set({ Authorization: `Bearer ${accessA}` })
+    expect(res.status).toBe(200)
+    const sessions = res.body.data.sessions as { id: string; current: boolean; platform: string; deviceName?: string }[]
+    const current = sessions.find((s) => s.id === sessionA)
+    expect(current).toBeTruthy()
+    expect(current?.current).toBe(true)
+    expect(current?.platform).toBe('android')
+    expect(current?.deviceName).toBe('Pixel 8')
+  })
+
+  it('registers and clears a push token on the current device', async () => {
+    const token = 'ExponentPushToken[test-device-a]'
+    const res = await request(app)
+      .post('/api/v1/auth/push-token')
+      .set({ Authorization: `Bearer ${accessA}` })
+      .send({ token, platform: 'android' })
+    expect(res.status).toBe(200)
+    const list = await request(app).get('/api/v1/auth/sessions').set({ Authorization: `Bearer ${accessA}` })
+    const current = (list.body.data.sessions as { id: string; pushEnabled: boolean }[]).find((s) => s.id === sessionA)
+    expect(current?.pushEnabled).toBe(true)
+
+    const removed = await request(app)
+      .delete('/api/v1/auth/push-token')
+      .set({ Authorization: `Bearer ${accessA}` })
+    expect(removed.status).toBe(200)
+  })
+
+  it('allows one device to sign out another device', async () => {
+    const second = await nativeLogin('admin@test.rw', deviceB)
+    accessB = second.accessToken
+    refreshB = second.refreshToken
+    sessionB = second.sessionId
+
+    const res = await request(app)
+      .delete(`/api/v1/auth/sessions/${sessionA}`)
+      .set({ Authorization: `Bearer ${accessB}` })
+    expect(res.status).toBe(200)
+
+    const me = await request(app).get('/api/v1/auth/me').set({ Authorization: `Bearer ${accessA}` })
+    expect(me.status).toBe(401)
+  })
+
+  it('revokes a device from an administrator account', async () => {
+    const teacher = await User.findOne({ email: 'teacher@test.rw' }).lean()
+    const teacherSession = await nativeLogin('teacher@test.rw', deviceA)
+
+    const res = await request(app)
+      .delete(`/api/v1/users/${String(teacher?._id)}/sessions/${teacherSession.sessionId}`)
+      .set(auth('admin@test.rw'))
+    expect(res.status).toBe(200)
+
+    const me = await request(app).get('/api/v1/auth/me').set({ Authorization: `Bearer ${teacherSession.accessToken}` })
+    expect(me.status).toBe(401)
+  })
+
+  it('rotates native refresh tokens and detects reuse', async () => {
+    const res = await request(app)
+      .post('/api/v1/auth/native/refresh')
+      .send({ refreshToken: refreshB, device: deviceB })
+    expect(res.status).toBe(200)
+    const rotated = res.body.data as { accessToken: string; refreshToken: string; sessionId: string }
+    expect(rotated.sessionId).not.toBe(sessionB)
+
+    const me = await request(app).get('/api/v1/auth/me').set({ Authorization: `Bearer ${rotated.accessToken}` })
+    expect(me.status).toBe(200)
+
+    const reuse = await request(app)
+      .post('/api/v1/auth/native/refresh')
+      .send({ refreshToken: refreshB, device: deviceB })
+    expect(reuse.status).toBe(401)
+
+    const revoked = await request(app).get('/api/v1/auth/me').set({ Authorization: `Bearer ${rotated.accessToken}` })
+    expect(revoked.status).toBe(401)
+  })
+})
+
+describe('student CRUD, custom fields and bulk import', () => {
+  let classId = ''
+
+  beforeAll(async () => {
+    const cls = await ClassModel.findOne({ name: 'S1' }).lean()
+    if (!cls) throw new Error('Seed class S1 missing')
+    classId = String(cls._id)
+    await login('admin@test.rw')
+    await login('teacher@test.rw')
+  })
+
+  it('registers a student with contact details and custom fields', async () => {
+    const res = await request(app)
+      .post('/api/v1/students')
+      .set(auth('admin@test.rw'))
+      .send({
+        firstName: 'Aline',
+        lastName: 'Mukamana',
+        gender: 'female',
+        classId,
+        admissionType: 'new',
+        boardingStatus: 'day',
+        contact: { phone: '0788111222', email: 'aline@example.rw', address: 'Kigali' },
+        customFields: [{ label: 'House', value: 'Amahoro' }],
+      })
+    expect(res.status).toBe(201)
+    expect(res.body.data.contact.email).toBe('aline@example.rw')
+    expect(res.body.data.customFields[0]).toMatchObject({ label: 'House', value: 'Amahoro' })
+
+    const profile = await request(app).get(`/api/v1/students/${res.body.data._id}/profile`).set(auth('admin@test.rw'))
+    expect(profile.status).toBe(200)
+    expect(profile.body.data.student.contact.phone).toBe('0788111222')
+  })
+
+  it('rejects duplicate admission numbers with a conflict', async () => {
+    const res = await request(app)
+      .post('/api/v1/students')
+      .set(auth('admin@test.rw'))
+      .send({ firstName: 'Clone', lastName: 'Learner', gender: 'male', classId, admissionNumber: 'ADM-TEST-0001' })
+    expect(res.status).toBe(409)
+  })
+
+  it('updates contact details and replaces custom fields', async () => {
+    const created = await request(app)
+      .post('/api/v1/students')
+      .set(auth('admin@test.rw'))
+      .send({ firstName: 'Eric', lastName: 'Nkurunziza', gender: 'male', classId })
+    expect(created.status).toBe(201)
+
+    const res = await request(app)
+      .patch(`/api/v1/students/${created.body.data._id}`)
+      .set(auth('admin@test.rw'))
+      .send({
+        contact: { phone: '0722333444', address: 'Huye' },
+        customFields: [{ label: 'Transport', value: 'Route 4' }, { label: 'Sponsor', value: 'District' }],
+      })
+    expect(res.status).toBe(200)
+
+    const profile = await request(app).get(`/api/v1/students/${created.body.data._id}/profile`).set(auth('admin@test.rw'))
+    expect(profile.body.data.student.contact).toMatchObject({ phone: '0722333444', address: 'Huye' })
+    expect(profile.body.data.student.customFields.map((f: { label: string }) => f.label)).toEqual(['Transport', 'Sponsor'])
+  })
+
+  it('dry-runs an import without creating records and reports duplicates', async () => {
+    const before = await Student.countDocuments()
+    const res = await request(app)
+      .post('/api/v1/students/import')
+      .set(auth('admin@test.rw'))
+      .send({
+        dryRun: true,
+        rows: [
+          { firstName: 'Import', lastName: 'First', gender: 'female', classId },
+          { firstName: 'Duplicate', lastName: 'Person', gender: 'male', classId, admissionNumber: 'ADM-TEST-0001' },
+          { firstName: '', lastName: 'NoFirst', gender: 'male', classId },
+        ],
+      })
+    expect(res.status).toBe(200)
+    expect(res.body.data.total).toBe(3)
+    expect(res.body.data.valid).toBe(1)
+    expect(res.body.data.invalid).toBe(2)
+    expect(res.body.data.imported).toBe(0)
+    expect(await Student.countDocuments()).toBe(before)
+    expect(res.body.data.results[1].duplicate.field).toBe('admissionNumber')
+  })
+
+  it('commits only valid import rows', async () => {
+    const before = await Student.countDocuments()
+    const res = await request(app)
+      .post('/api/v1/students/import')
+      .set(auth('admin@test.rw'))
+      .send({
+        rows: [
+          { firstName: 'Import', lastName: 'Committed', gender: 'female', classId },
+          { firstName: 'Duplicate', lastName: 'Person', gender: 'male', classId, admissionNumber: 'ADM-TEST-0001' },
+        ],
+      })
+    expect(res.status).toBe(200)
+    expect(res.body.data.imported).toBe(1)
+    expect(res.body.data.failed).toBe(1)
+    expect(await Student.countDocuments()).toBe(before + 1)
+  })
+
+  it('archives with a reason, then restores the student', async () => {
+    const created = await request(app)
+      .post('/api/v1/students')
+      .set(auth('admin@test.rw'))
+      .send({ firstName: 'Archive', lastName: 'Candidate', gender: 'male', classId })
+    const id = created.body.data._id
+
+    const noReason = await request(app).delete(`/api/v1/students/${id}`).set(auth('admin@test.rw'))
+    expect(noReason.status).toBe(400)
+
+    const archived = await request(app)
+      .delete(`/api/v1/students/${id}?reason=${encodeURIComponent('Left the school')}`)
+      .set(auth('admin@test.rw'))
+    expect(archived.status).toBe(200)
+    expect(archived.body.data.status).toBe('archived')
+    expect(archived.body.data.undo?.length).toBeGreaterThan(0)
+
+    const hidden = await request(app).get('/api/v1/students').set(auth('admin@test.rw')).query({ q: 'Archive Candidate' })
+    expect(hidden.body.data.some((s: { _id: string }) => s._id === id)).toBe(false)
+
+    const restored = await request(app).post(`/api/v1/students/${id}/restore`).set(auth('admin@test.rw'))
+    expect(restored.status).toBe(200)
+    expect(restored.body.data.status).toBe('active')
+  })
+
+  it('exports only explicitly selected students', async () => {
+    const list = await request(app)
+      .get('/api/v1/students')
+      .set(auth('admin@test.rw'))
+      .query({ q: 'Aline Mukamana' })
+    expect(list.status).toBe(200)
+    const target = list.body.data.find((s: { fullName: string }) => s.fullName === 'Aline Mukamana')
+    expect(target).toBeTruthy()
+
+    const res = await request(app)
+      .get('/api/v1/students/export')
+      .set(auth('admin@test.rw'))
+      .query({ ids: String(target._id) })
+    expect(res.status).toBe(200)
+    expect(res.text).toContain('Aline Mukamana')
+    expect(res.text.split('\n').filter((line) => line.trim()).length).toBe(2)
+  })
+
+  it('denies student import to teachers without the permission', async () => {
+    const res = await request(app)
+      .post('/api/v1/students/import')
+      .set(auth('teacher@test.rw'))
+      .send({ rows: [{ firstName: 'Blocked', lastName: 'Row', gender: 'male', classId }] })
+    expect(res.status).toBe(403)
+  })
+})

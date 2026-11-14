@@ -3,6 +3,7 @@ import { Types } from 'mongoose'
 import { RolePermission, User, UserRole } from '../models/core.js'
 import { Notification } from '../models/communications.js'
 import { logger } from '../shared/logger.js'
+import { sendPushToUsers } from './push.service.js'
 
 let ioRef: Server | null = null
 const FEED_LIMIT = 250
@@ -45,6 +46,13 @@ export async function notifyUsers(userIds: (string | Types.ObjectId)[], payload:
         })
       }
     }
+    // Safeguarding previews must not leak onto a lock screen.
+    const sensitive = payload.type.startsWith('safeguarding') || payload.data?.sensitive === true
+    void sendPushToUsers(unique, {
+      title: sensitive ? 'ConductNexus' : payload.title,
+      body: sensitive ? 'You have a new confidential update. Sign in to view it.' : payload.message,
+      data: { type: payload.type, link: payload.link, ...payload.data },
+    }).catch((err) => logger.warn({ err }, 'Push notification delivery failed'))
   } catch (err) {
     logger.error({ err }, 'Failed to create notifications')
   }

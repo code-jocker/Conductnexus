@@ -21,6 +21,30 @@ export function ChangePasswordPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+    if (!currentPassword) {
+      setError(forced ? 'Enter the temporary password you signed in with.' : 'Enter your current password.')
+      return
+    }
+    if (newPassword.length < 10) {
+      setError('New password must be at least 10 characters long.')
+      return
+    }
+    if (!/[a-z]/.test(newPassword)) {
+      setError('New password must include a lowercase letter.')
+      return
+    }
+    if (!/[A-Z]/.test(newPassword)) {
+      setError('New password must include an uppercase letter.')
+      return
+    }
+    if (!/\d/.test(newPassword)) {
+      setError('New password must include a number.')
+      return
+    }
+    if (newPassword === currentPassword) {
+      setError('Choose a password that is different from the temporary password.')
+      return
+    }
     if (newPassword !== confirm) {
       setError('The two passwords do not match.')
       return
@@ -73,21 +97,23 @@ export function ChangePasswordPage() {
         )}
 
         <form onSubmit={onSubmit} className="space-y-4">
-          {!forced && (
-            <Field label="Current password" required>
-              <div className="relative">
-                <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <Input
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  className="pl-9"
-                  value={currentPassword}
-                  onChange={(e) => setCurrent(e.target.value)}
-                />
-              </div>
-            </Field>
-          )}
+          <Field
+            label={forced ? 'Temporary password' : 'Current password'}
+            hint={forced ? 'The password from your invitation, used to sign in just now.' : undefined}
+            required
+          >
+            <div className="relative">
+              <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                type="password"
+                autoComplete="current-password"
+                required
+                className="pl-9"
+                value={currentPassword}
+                onChange={(e) => setCurrent(e.target.value)}
+              />
+            </div>
+          </Field>
           <Field label="New password" hint="10+ characters with upper case, lower case and a number" required>
             <Input type="password" autoComplete="new-password" required value={newPassword} onChange={(e) => setNew(e.target.value)} />
           </Field>

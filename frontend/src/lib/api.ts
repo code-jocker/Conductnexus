@@ -59,10 +59,33 @@ api.interceptors.response.use(
   },
 )
 
+function firstValidationMessage(details: unknown): string | null {
+  if (!details || typeof details !== 'object') return null
+  const fieldErrors = (details as { fieldErrors?: Record<string, unknown> }).fieldErrors
+  if (fieldErrors) {
+    for (const [field, value] of Object.entries(fieldErrors)) {
+      if (Array.isArray(value) && typeof value[0] === 'string' && value[0]) {
+        const label = field
+          .replace(/([A-Z])/g, ' $1')
+          .replace(/^./, (c) => c.toUpperCase())
+          .trim()
+        return `${label}: ${value[0]}`
+      }
+    }
+  }
+  const formErrors = (details as { formErrors?: unknown }).formErrors
+  if (Array.isArray(formErrors) && typeof formErrors[0] === 'string' && formErrors[0]) return formErrors[0]
+  return null
+}
+
 export function apiError(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const data = error.response?.data as { error?: { message?: string; details?: unknown } } | undefined
-    if (data?.error?.message) return data.error.message
+    if (data?.error) {
+      const detail = firstValidationMessage(data.error.details)
+      if (detail) return detail
+      if (data.error.message) return data.error.message
+    }
     if (error.code === 'ERR_NETWORK') return 'Cannot reach the server. Check that the API is running.'
     return error.message
   }

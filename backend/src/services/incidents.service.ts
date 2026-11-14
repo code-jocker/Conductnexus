@@ -23,6 +23,7 @@ export type CreateIncidentInput = {
   location: string
   witnesses?: { name: string; contact?: string; statement?: string }[]
   evidenceIds?: string[]
+  immediateAction?: string
   safeguardingFlag?: boolean
   clientSubmissionId?: string
 }
@@ -84,6 +85,7 @@ export async function createIncident(ctx: AuthContext, input: CreateIncidentInpu
     status: 'draft',
     witnesses: input.witnesses ?? [],
     evidenceIds: (input.evidenceIds ?? []).filter(Boolean).map((id) => new Types.ObjectId(id)),
+    immediateAction: input.immediateAction?.trim() || undefined,
     safeguardingFlag: Boolean(input.safeguardingFlag),
     academicYearId: student.academicYearId ?? undefined,
     termId,
@@ -133,6 +135,7 @@ export async function updateDraftIncident(ctx: AuthContext, id: string, input: P
   if (input.occurredAt !== undefined) incident.occurredAt = new Date(input.occurredAt)
   if (input.witnesses !== undefined) incident.witnesses = input.witnesses
   if (input.evidenceIds !== undefined) incident.evidenceIds = input.evidenceIds.map((e) => new Types.ObjectId(e))
+  if (input.immediateAction !== undefined) incident.immediateAction = input.immediateAction.trim() || undefined
   if (input.safeguardingFlag !== undefined) incident.safeguardingFlag = input.safeguardingFlag
   incident.history.push({ at: new Date(), by: ctx.userId, action: 'updated', note: 'Draft updated' })
   await incident.save()

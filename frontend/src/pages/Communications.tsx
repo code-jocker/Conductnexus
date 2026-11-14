@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Bell,
@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Send,
   Smartphone,
+  Trash2,
   Wifi,
   WifiOff,
 } from 'lucide-react'
@@ -586,6 +587,16 @@ function QueueTab() {
     onError: (err) => toastError(apiError(err)),
   })
 
+  const purge = useMutation({
+    mutationFn: () => post<{ purged: number; byChannel: Record<string, number> }>('/notifications/queue/purge-non-whatsapp'),
+    onSuccess: (result) => {
+      success(`${result.purged} failed SMS/email message(s) removed — parent messaging is WhatsApp only`)
+      queryClient.invalidateQueries({ queryKey: ['queue'] })
+      queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
+    },
+    onError: (err) => toastError(apiError(err)),
+  })
+
   const rows = data?.items ?? []
   const s = stats ?? {}
 
@@ -610,7 +621,10 @@ function QueueTab() {
           <option value="sms">SMS</option>
           <option value="email">Email</option>
         </Select>
-        <Button variant="secondary" icon={RefreshCw} className="ml-auto" loading={process.isPending} onClick={() => process.mutate()}>
+        <Button variant="secondary" icon={Trash2} className="ml-auto" loading={purge.isPending} onClick={() => purge.mutate()}>
+          Remove failed SMS/email messages
+        </Button>
+        <Button variant="secondary" icon={RefreshCw} loading={process.isPending} onClick={() => process.mutate()}>
           Process queue now
         </Button>
       </Card>
@@ -699,7 +713,7 @@ function TemplatesTab() {
         <CardHeader
           icon={Bell}
           title="Notification templates"
-          subtitle="WhatsApp, SMS, email and in-app messages"
+          subtitle="WhatsApp and in-app messages"
           actions={has('templates.manage') && <Button size="sm" icon={Plus} onClick={() => setTemplateModal('new')}>New</Button>}
         />
         {!has('notifications.manage') ? (
@@ -848,8 +862,6 @@ function NotificationTemplateModal({
           <Field label="Channel">
             <Select value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })}>
               <option value="whatsapp">WhatsApp</option>
-              <option value="sms">SMS</option>
-              <option value="email">Email</option>
               <option value="in_app">In-app</option>
             </Select>
           </Field>
@@ -859,7 +871,7 @@ function NotificationTemplateModal({
             </div>
           </Field>
         </div>
-        <Field label="Subject" hint="Used for email; optional elsewhere.">
+        <Field label="Subject" hint="Optional for WhatsApp; shown as an email-like heading.">
           <Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} />
         </Field>
         <Field label="Body" required>
@@ -944,10 +956,13 @@ function WhatsappTab() {
   const { has } = useAuth()
   const { success, error: toastError } = useToast()
   const queryClient = useQueryClient()
+  const [pairOpen, setPairOpen] = useState(false)
+  const [pairPhone, setPairPhone] = useState('')
+  const [pairError, setPairError] = useState('')
 
   const { data: status } = useQuery({
     queryKey: ['whatsapp-status'],
-    queryFn: () => get<{ status: string; enabled: boolean; qrDataUrl?: string; lastConnectedAt?: string; lastError?: string; info?: { pushname?: string; number?: string } }>('/whatsapp/status'),
+    queryFn: () => get<{ status: string; enabled: boolean; qrDataUrl?: string; pairingCode?: string; pairingPhone?: string; lastConnectedAt?: string; lastError?: string; info?: { pushname?: string; number?: string } }>('/whatsapp/status'),
     refetchInterval: 6_000,
   })
 
@@ -958,9 +973,9 @@ function WhatsappTab() {
   })
 
   const connect = useMutation({
-    mutationFn: () => post('/whatsapp/connect'),
-    onSuccess: () => {
-      success('WhatsApp is starting. Scan the QR code with the school phone.')
+    mutationFn: (phone?: string) => post('/whatsapp/connect', phone ? { phoneNumber: phone } : {}),
+    onSuccess: (_result, phone) => {
+      success(phone ? 'Pairing requested. The code will appear here in a few seconds.' : 'WhatsApp is starting. Scan the QR code with the school phone.')
       queryClient.invalidateQueries({ queryKey: ['whatsapp-status'] })
       queryClient.invalidateQueries({ queryKey: ['whatsapp-qr'] })
     },
@@ -971,6 +986,7 @@ function WhatsappTab() {
     mutationFn: () => post('/whatsapp/disconnect'),
     onSuccess: () => {
       success('WhatsApp disconnected')
+      setPairOpen(false)
       queryClient.invalidateQueries({ queryKey: ['whatsapp-status'] })
       queryClient.invalidateQueries({ queryKey: ['whatsapp-qr'] })
     },
@@ -979,6 +995,19 @@ function WhatsappTab() {
 
   const state = status?.status ?? 'disabled'
   const connected = state === 'ready'
+  const pairing = state === 'pairing' && Boolean(status?.pairingCode)
+  const displayCode = status?.pairingCode ? status.pairingCode.replace(/(.{4})(?=.)/, '$1-') : ''
+
+  function requestPairingCode(e: FormEvent) {
+    e.preventDefault()
+    const digits = pairPhone.replace(/[^\d]/g, '')
+    if (!/^\d{8,15}$/.test(digits)) {
+      setPairError('Enter the number with its country code, digits only — for example 2507XXXXXXXX.')
+      return
+    }
+    setPairError('')
+    connect.mutate(digits)
+  }
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -1007,7 +1036,7 @@ function WhatsappTab() {
         {!status?.enabled && (
           <div className="mt-4">
             <Alert tone="warning" title="WhatsApp is switched off">
-              An administrator must enable WhatsApp in Settings → Communications before the gateway can connect. SMS or email remains available as a fallback.
+              An administrator must enable WhatsApp in Settings → Communications before the gateway can connect. Parent messaging is WhatsApp only.
             </Alert>
           </div>
         )}
@@ -1025,7 +1054,7 @@ function WhatsappTab() {
       <Card className="p-5">
         <div className="flex items-center gap-2 text-sm font-semibold"><QrCode className="h-4 w-4" /> Link a device</div>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-          Open WhatsApp on the school phone → Linked devices → Link a device, then scan this code. The session is stored on the server.
+          Open WhatsApp on the school phone → Linked devices → Link a device, then scan this code. No camera? Use a pairing code. The session is stored on the server.
         </p>
         <div className="mt-4 flex min-h-[240px] items-center justify-center rounded-xl border border-dashed border-line bg-slate-50 p-4 dark:border-[#2a3b55] dark:bg-white/[0.02]">
           {connected ? (
@@ -1033,6 +1062,15 @@ function WhatsappTab() {
               <Wifi className="mx-auto h-10 w-10 text-emerald-500" />
               <p className="mt-2 text-sm font-medium">Device connected</p>
               <p className="text-xs text-slate-500">Messages will send automatically from the queue.</p>
+            </div>
+          ) : pairing ? (
+            <div className="text-center">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Pairing code</p>
+              <p className="mt-2 select-all text-4xl font-bold tracking-[0.25em] text-slate-900 dark:text-white">{displayCode}</p>
+              <p className="mt-3 max-w-xs text-xs text-slate-500">
+                On the phone: WhatsApp → Linked devices → Link a device → <span className="font-semibold">Link with phone number instead</span>, then enter this code.
+              </p>
+              <p className="mt-2 text-xs text-slate-400">The code refreshes automatically every few minutes.</p>
             </div>
           ) : qr?.qrDataUrl ? (
             <div className="text-center">
@@ -1046,6 +1084,34 @@ function WhatsappTab() {
             </div>
           )}
         </div>
+
+        {!connected && has('whatsapp.manage') && (
+          <div className="mt-4 rounded-xl border border-line p-3 dark:border-[#2a3b55]">
+            {pairOpen ? (
+              <form onSubmit={requestPairingCode} className="space-y-3">
+                <Field label="WhatsApp number (with country code)" hint="Digits only, no + or spaces — for example 250788123456.">
+                  <Input
+                    value={pairPhone}
+                    onChange={(e) => setPairPhone(e.target.value)}
+                    placeholder="2507XXXXXXXX"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                  />
+                </Field>
+                {pairError && <p className="text-xs text-red-600 dark:text-red-400">{pairError}</p>}
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" icon={Smartphone} loading={connect.isPending}>Get pairing code</Button>
+                  <Button type="button" variant="ghost" onClick={() => { setPairOpen(false); setPairError('') }}>Cancel</Button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-slate-500 dark:text-slate-400">No camera? Link with a phone number and an 8-character code instead.</p>
+                <Button variant="secondary" icon={Smartphone} onClick={() => setPairOpen(true)}>Use phone number</Button>
+              </div>
+            )}
+          </div>
+        )}
       </Card>
     </div>
   )

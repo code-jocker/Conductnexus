@@ -5,6 +5,7 @@ import { ApiError } from '../shared/errors.js'
 
 export type AuthContext = {
   userId: Types.ObjectId
+  sessionId?: string
   name: string
   email: string
   roles: string[]

@@ -13,8 +13,9 @@ import {
   UserRole,
 } from '../models/core.js'
 import { ApiError } from '../shared/errors.js'
-import { hashPassword } from '../services/auth.service.js'
+import { hashPassword, revokeAllSessions } from '../services/auth.service.js'
 import { getUserContext, invalidateUserAccess } from '../services/rbac.service.js'
+import { listUserSessions, revokeSession } from '../services/session.service.js'
 import { writeAudit } from '../services/audit.service.js'
 import { inviteEmail, sendMail } from '../services/email.service.js'
 import { env } from '../config/env.js'
@@ -203,8 +204,39 @@ router.post(
     const user = await User.findByIdAndUpdate(req.params.id, { $set: { status: 'inactive' } }, { new: true })
     if (!user) throw ApiError.notFound('User not found')
     invalidateUserAccess(String(user._id))
+    await revokeAllSessions(user._id)
     await writeAudit({ req, actor: req.auth, action: 'user.deactivated', resourceType: 'User', resourceId: String(user._id) })
-    ok(res, { message: 'User deactivated. Active sessions remain until expiry, and the account can no longer sign in.' })
+    ok(res, { message: 'User deactivated. All active sessions were signed out.' })
+  }),
+)
+
+router.get(
+  '/users/:id/sessions',
+  requirePermission('users.view'),
+  asyncHandler(async (req, res) => {
+    const user = await User.findById(req.params.id).select('_id name email').lean()
+    if (!user) throw ApiError.notFound('User not found')
+    ok(res, {
+      user: { id: String(user._id), name: user.name, email: user.email },
+      sessions: await listUserSessions(user._id),
+    })
+  }),
+)
+
+router.delete(
+  '/users/:id/sessions/:sessionId',
+  requirePermission('users.update'),
+  asyncHandler(async (req, res) => {
+    await revokeSession(req.params.id, req.params.sessionId, 'revoked_by_admin')
+    await writeAudit({
+      req,
+      actor: req.auth,
+      action: 'auth.session_revoked_by_admin',
+      resourceType: 'User',
+      resourceId: req.params.id,
+      after: { sessionId: req.params.sessionId },
+    })
+    ok(res, { message: 'Session signed out' })
   }),
 )
 

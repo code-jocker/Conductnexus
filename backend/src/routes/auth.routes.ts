@@ -25,9 +25,32 @@ import {
 import { getSettings, User as UserModel } from '../models/core.js'
 import { firebaseConfigured, smtpConfigured } from '../config/env.js'
 import { invalidateUserAccess } from '../services/rbac.service.js'
+import { listUserSessions, registerPushToken, removePushToken, revokeSession } from '../services/session.service.js'
 import { actorOf, passwordField } from './helpers.js'
 
 const router = Router()
+
+const deviceSchema = z
+  .object({
+    deviceId: z.string().trim().min(3).max(120).optional(),
+    deviceName: z.string().trim().max(120).optional(),
+    platform: z.enum(['ios', 'android', 'web', 'unknown']).optional(),
+    appVersion: z.string().trim().max(40).optional(),
+  })
+  .optional()
+
+type DeviceInput = z.infer<typeof deviceSchema>
+
+function clientMeta(req: import('express').Request, device: DeviceInput, platform: 'web' | 'android' | 'ios' = 'web') {
+  return {
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+    deviceId: device?.deviceId,
+    deviceName: device?.deviceName,
+    platform: device?.platform ?? platform,
+    appVersion: device?.appVersion,
+  }
+}
 
 function sendTokens(res: import('express').Response, tokens: TokenPair, payload: Record<string, unknown>) {
   res.cookie(REFRESH_COOKIE, tokens.refreshToken, refreshCookieOptions(tokens.refreshExpires))
@@ -35,6 +58,16 @@ function sendTokens(res: import('express').Response, tokens: TokenPair, payload:
     ...payload,
     accessToken: tokens.accessToken,
     sessionExpiresAt: tokens.refreshExpires,
+  })
+}
+
+function sendNativeTokens(res: import('express').Response, tokens: TokenPair, payload: Record<string, unknown>) {
+  return ok(res, {
+    ...payload,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    refreshExpires: tokens.refreshExpires,
+    sessionId: tokens.sessionId,
   })
 }
 
@@ -90,8 +123,7 @@ router.post(
     const { tokens, ctx } = await loginWithPassword({
       email: req.body.email,
       password: req.body.password,
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
+      ...clientMeta(req, undefined, 'web'),
     })
     await writeAudit({ req, actor: ctx, action: 'auth.login', resourceType: 'User', resourceId: String(ctx.userId) })
     sendTokens(res, tokens, { user: ctx.user, permissions: [...ctx.permissions], roles: ctx.roles })
@@ -110,8 +142,7 @@ router.post(
     }
     const { tokens, ctx, isNew, hasAccess } = await loginWithGoogle({
       idToken: req.body.idToken,
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
+      ...clientMeta(req, undefined, 'web'),
     })
     await writeAudit({ req, actor: ctx, action: isNew ? 'auth.google_signup' : 'auth.google_login', resourceType: 'User', resourceId: String(ctx.userId) })
     sendTokens(res, tokens, {
@@ -131,7 +162,7 @@ router.post(
   '/refresh',
   asyncHandler(async (req, res) => {
     const token = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE]
-    const result = await rotateRefreshToken({ token, ip: req.ip, userAgent: req.headers['user-agent'] })
+    const result = await rotateRefreshToken({ token, ...clientMeta(req, undefined, 'web') })
     sendTokens(res, result.tokens, {
       user: result.ctx.user,
       permissions: [...result.ctx.permissions],
@@ -158,6 +189,164 @@ router.post(
     invalidateUserAccess(String(actorOf(req).userId))
     res.clearCookie(REFRESH_COOKIE, { path: '/api/v1/auth' })
     ok(res, { message: 'All sessions revoked' })
+  }),
+)
+
+// ── Native (Expo / React Native) session flow ──────────────────────────────
+// The refresh token is returned in the response body and must be stored in
+// the device keystore. It is never placed in a cookie for native clients.
+
+router.post(
+  '/native/login',
+  authLimiter,
+  validate({
+    body: z.object({
+      email: z.string().email(),
+      password: z.string().min(1),
+      device: deviceSchema,
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { tokens, ctx } = await loginWithPassword({
+      email: req.body.email,
+      password: req.body.password,
+      ...clientMeta(req, req.body.device, 'android'),
+    })
+    await writeAudit({ req, actor: ctx, action: 'auth.native_login', resourceType: 'User', resourceId: String(ctx.userId) })
+    sendNativeTokens(res, tokens, {
+      user: ctx.user,
+      permissions: [...ctx.permissions],
+      roles: ctx.roles,
+    })
+  }),
+)
+
+router.post(
+  '/native/google',
+  authLimiter,
+  validate({
+    body: z.object({ idToken: z.string().min(20), device: deviceSchema }),
+  }),
+  asyncHandler(async (req, res) => {
+    if (!firebaseConfigured) {
+      throw ApiError.badRequest('Google Sign-In is not configured yet. Ask your administrator to set FIREBASE_PROJECT_ID on the server.')
+    }
+    const { tokens, ctx, isNew, hasAccess } = await loginWithGoogle({
+      idToken: req.body.idToken,
+      ...clientMeta(req, req.body.device, 'android'),
+    })
+    await writeAudit({
+      req,
+      actor: ctx,
+      action: isNew ? 'auth.native_google_signup' : 'auth.native_google_login',
+      resourceType: 'User',
+      resourceId: String(ctx.userId),
+    })
+    sendNativeTokens(res, tokens, {
+      user: ctx.user,
+      permissions: [...ctx.permissions],
+      roles: ctx.roles,
+      isNew,
+      hasAccess,
+      message: hasAccess
+        ? undefined
+        : 'Your Google account was verified. An administrator must assign your school role before you can open records.',
+    })
+  }),
+)
+
+router.post(
+  '/native/refresh',
+  validate({
+    body: z.object({ refreshToken: z.string().min(20), device: deviceSchema }),
+  }),
+  asyncHandler(async (req, res) => {
+    const result = await rotateRefreshToken({
+      token: req.body.refreshToken,
+      ...clientMeta(req, req.body.device, 'android'),
+    })
+    sendNativeTokens(res, result.tokens, {
+      user: result.ctx.user,
+      permissions: [...result.ctx.permissions],
+      roles: result.ctx.roles,
+    })
+  }),
+)
+
+router.post(
+  '/native/logout',
+  validate({ body: z.object({ refreshToken: z.string().min(20).optional() }) }),
+  asyncHandler(async (req, res) => {
+    await revokeRefreshToken(req.body.refreshToken)
+    ok(res, { message: 'Signed out' })
+  }),
+)
+
+router.get(
+  '/sessions',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    ok(res, { sessions: await listUserSessions(ctx.userId, ctx.sessionId) })
+  }),
+)
+
+router.delete(
+  '/sessions/:id',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    await revokeSession(ctx.userId, req.params.id, 'revoked_by_user')
+    if (req.params.id === ctx.sessionId) res.clearCookie(REFRESH_COOKIE, { path: '/api/v1/auth' })
+    await writeAudit({
+      req,
+      actor: ctx,
+      action: 'auth.session_revoked',
+      resourceType: 'Session',
+      resourceId: req.params.id,
+    })
+    ok(res, { message: 'Session signed out' })
+  }),
+)
+
+router.post(
+  '/logout-others',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    await revokeAllSessions(ctx.userId, ctx.sessionId)
+    ok(res, { message: 'Other sessions signed out' })
+  }),
+)
+
+router.post(
+  '/push-token',
+  authenticate,
+  validate({
+    body: z.object({
+      token: z.string().trim().min(10).max(500),
+      platform: z.enum(['ios', 'android', 'web', 'unknown']).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    await registerPushToken({
+      userId: ctx.userId,
+      sessionId: ctx.sessionId,
+      token: req.body.token,
+      platform: req.body.platform,
+    })
+    ok(res, { message: 'This device will receive push notifications' })
+  }),
+)
+
+router.delete(
+  '/push-token',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    await removePushToken(ctx.userId, ctx.sessionId)
+    ok(res, { message: 'Push notifications disabled for this device' })
   }),
 )
 
@@ -192,7 +381,7 @@ router.post(
   }),
   asyncHandler(async (req, res) => {
     const ctx = actorOf(req)
-    await changePassword(String(ctx.userId), req.body.currentPassword ?? '', req.body.newPassword)
+    await changePassword(String(ctx.userId), req.body.currentPassword ?? '', req.body.newPassword, ctx.sessionId)
     await writeAudit({ req, actor: ctx, action: 'auth.password_changed', resourceType: 'User', resourceId: String(ctx.userId) })
     ok(res, { message: 'Password updated. Other sessions were signed out.' })
   }),

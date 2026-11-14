@@ -235,16 +235,16 @@ export function SettingsPage() {
                 <div className="flex items-center justify-between gap-4 rounded-lg border border-line p-3 dark:border-[#1f2f49]">
                   <div>
                     <p className="text-sm font-medium">WhatsApp channel</p>
-                    <p className="text-xs text-slate-500">Uses the connected school phone session.</p>
+                    <p className="text-xs text-slate-500">Default channel for parent messages. Uses the connected school phone session.</p>
                   </div>
                   <Toggle checked={form.comms.whatsappEnabled} onChange={(v) => setForm({ ...form, comms: { ...form.comms, whatsappEnabled: v } })} label="WhatsApp enabled" />
                 </div>
                 <div className="flex items-center justify-between gap-4 rounded-lg border border-line p-3 dark:border-[#1f2f49]">
                   <div>
-                    <p className="text-sm font-medium">SMS channel</p>
-                    <p className="text-xs text-slate-500">Fallback when WhatsApp is unavailable.</p>
+                    <p className="text-sm font-medium">Delivery policy</p>
+                    <p className="text-xs text-slate-500">Parent messages are sent through WhatsApp only. SMS and email fallbacks are disabled.</p>
                   </div>
-                  <Toggle checked={form.comms.smsEnabled} onChange={(v) => setForm({ ...form, comms: { ...form.comms, smsEnabled: v } })} label="SMS enabled" />
+                  <Badge tone="emerald">WhatsApp only</Badge>
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
@@ -258,6 +258,11 @@ export function SettingsPage() {
                   <Input type="number" min={0} max={10} value={form.comms.retryLimit} onChange={(e) => setForm({ ...form, comms: { ...form.comms, retryLimit: Number(e.target.value) } })} />
                 </Field>
               </div>
+              {has('notifications.manage') && (
+                <Alert tone="info" title="WhatsApp connection">
+                  Connect the school phone from Communications → WhatsApp and keep it online. Messages queue until the session is ready.
+                </Alert>
+              )}
               <div className="flex items-center justify-between gap-4 rounded-lg border border-line p-3 dark:border-[#1f2f49]">
                 <div>
                   <p className="text-sm font-medium">Notify parents on deduction</p>
@@ -366,3 +371,4 @@ export function SettingsPage() {
     </div>
   )
 }
+

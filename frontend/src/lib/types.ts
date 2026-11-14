@@ -49,17 +49,162 @@ export type Student = {
   admissionNumber: string
   firstName: string
   lastName: string
+  otherNames?: string
   fullName: string
   gender: 'male' | 'female'
+  dateOfBirth?: string
+  nationality?: string
+  nationalId?: string
+  religion?: string
+  bloodGroup?: string
+  photoUrl?: string
+  contact?: { phone?: string; email?: string; address?: string }
+  customFields?: { label: string; value: string }[]
   classId: { _id?: string; name?: string } | string
   streamId?: { _id?: string; name?: string } | string | null
   dormitoryId?: { _id?: string; name?: string } | string | null
+  classTeacherId?: { _id?: string; name?: string; position?: string } | string | null
   status: string
+  previousStatus?: string
+  admissionDate?: string
+  admissionType?: string
+  previousSchool?: string
+  previousClass?: string
+  boardingStatus?: 'day' | 'boarding'
+  roomNumber?: string
+  emergencyContact?: { name?: string; relationship?: string; phone?: string }
+  medicalNotes?: string
+  documents?: StudentDocument[]
+  archivedAt?: string
+  archivedReason?: string
   currentBalance: number
   riskLevel: 'green' | 'yellow' | 'orange' | 'red'
   guardianCount?: number
+  notes?: string
+  enrollmentHistory?: PlacementEvent[]
   createdAt?: string
 }
+
+export type StudentDocument = {
+  _id?: string
+  title: string
+  type: string
+  url?: string
+  notes?: string
+  uploadedBy?: string
+  uploadedAt: string
+}
+
+export type PlacementEvent = {
+  _id?: string
+  academicYearId?: string
+  termId?: string
+  classId?: string
+  streamId?: string | null
+  dormitoryId?: string | null
+  action: string
+  reason?: string
+  at: string
+  by?: string
+}
+
+export type GuardianLink = {
+  _id: string
+  relationship: string
+  isPrimary: boolean
+  isEmergencyContact: boolean
+  notes?: string
+  parentId?: {
+    _id?: string
+    name?: string
+    relationship?: string
+    phone?: string
+    altPhone?: string
+    email?: string
+    address?: string
+    occupation?: string
+    nationalId?: string
+    preferredChannel?: string
+    whatsappConsent?: boolean
+    smsConsent?: boolean
+    emailConsent?: boolean
+    verificationStatus?: string
+  } | null
+}
+
+export type StudentProfile = {
+  student: Student & { placementHistory?: PlacementEvent[] }
+  class?: { name?: string; level?: string } | null
+  stream?: { name?: string } | null
+  dormitory?: { name?: string } | null
+  classTeacher?: { name?: string; position?: string; email?: string } | null
+  guardians: GuardianLink[]
+  conduct: { startingMarks: number; totalDeductions: number; totalRewards: number; currentBalance: number; term?: { _id?: string; name?: string } }
+  ledger: LedgerEntry[]
+  incidents: Incident[]
+  assessments: { _id: string; riskLevel: string; score?: number; reason?: string; createdAt: string }[]
+  interventions: { _id: string; type: string; title: string; status: string; startDate?: string; assignedTo?: { name?: string } | string }[]
+  followUps: { _id: string; type: string; dueDate: string; status: string }[]
+  recognitions: { _id: string; title: string; points?: number; awardedAt: string; notes?: string; category?: string }[]
+  letters: Letter[]
+  messages: {
+    _id: string
+    channel: string
+    status: string
+    to: string
+    templateKey?: string
+    body: string
+    attempts: number
+    lastError?: string
+    createdAt: string
+    sentAt?: string
+  }[]
+  investigations: { _id: string; caseNumber: string; title: string; type: string; status: string; createdAt: string }[]
+  appeals: { _id: string; appealNumber: string; decisionType: string; grounds: string; status: string; submittedAt: string }[]
+  safeguarding: { _id: string; caseNumber: string; category: string; severity: string; status: string; createdAt: string }[]
+  meetings: { _id: string; reference: string; title: string; type: string; scheduledAt: string; status: string }[]
+  permissions: {
+    canEdit: boolean
+    canManageGuardians: boolean
+    canManageDocuments: boolean
+    canLifecycle: boolean
+    canArchive: boolean
+    canDelete: boolean
+    canRestore: boolean
+    canPromote: boolean
+    canViewLedger: boolean
+    canViewSafeguarding: boolean
+    canViewActivity: boolean
+  }
+}
+
+export type PromotionBatch = {
+  _id: string
+  id?: string
+  batchNumber: string
+  title: string
+  fromClassId: { _id?: string; name?: string; level?: string } | string
+  toClassId?: { _id?: string; name?: string; level?: string } | string | null
+  graduate: boolean
+  status: string
+  reason?: string
+  items?: {
+    _id?: string
+    studentId: string
+    studentSnapshot: { fullName: string; studentId: string; admissionNumber: string }
+    status: string
+    error?: string
+  }[]
+  createdBy?: { name?: string } | string
+  submittedAt?: string
+  reviewedAt?: string
+  executedAt?: string
+  rejectionReason?: string
+  decisionNotes?: string
+  history?: { at: string; action: string; note?: string }[]
+  createdAt: string
+}
+
 
 export type Offence = {
   _id: string

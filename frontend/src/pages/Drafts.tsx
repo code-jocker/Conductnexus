@@ -21,7 +21,9 @@ export function DraftsPage() {
   const [syncing, setSyncing] = useState(false)
   const [results, setResults] = useState<SyncResult[]>([])
 
-  const refresh = () => setDrafts(listOfflineDrafts())
+  const refresh = () => {
+    void listOfflineDrafts().then(setDrafts)
+  }
 
   useEffect(() => {
     refresh()
@@ -46,12 +48,14 @@ export function DraftsPage() {
           description: d.description,
           occurredAt: d.occurredAt,
           location: d.location || undefined,
+          safeguardingFlag: d.safeguarding || undefined,
+          witnesses: d.witnesses?.length ? d.witnesses : undefined,
           clientSubmissionId: d.clientSubmissionId,
         })),
       })
       setResults(response.results)
       const synced = response.results.filter((r) => r.status === 'synced')
-      synced.forEach((r) => removeOfflineDraft(r.localId))
+      await Promise.all(synced.map((r) => removeOfflineDraft(r.localId)))
       refresh()
       if (synced.length) success(`${synced.length} draft${synced.length === 1 ? '' : 's'} synced as incidents`)
       const failed = response.results.length - synced.length
@@ -103,6 +107,7 @@ export function DraftsPage() {
                       <span className="font-medium">{draft.studentName}</span>
                       {draft.studentRef && <span className="text-xs text-slate-400">{draft.studentRef}</span>}
                       <Badge tone="ochre">{draft.offenceName}</Badge>
+                      {draft.safeguarding && <Badge tone="danger">Safeguarding</Badge>}
                       {result && <Badge tone={statusTone[result.status]}>{result.status === 'synced' ? `Synced ${result.reference ?? ''}` : result.status}</Badge>}
                     </div>
                     <p className="mt-2 max-w-2xl text-sm text-slate-600 dark:text-slate-300">{draft.description}</p>
@@ -113,7 +118,7 @@ export function DraftsPage() {
                     {result?.error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{result.error}</p>}
                   </div>
                   <div className="flex shrink-0 gap-2">
-                    <Button size="sm" variant="ghost" icon={Trash2} onClick={() => { removeOfflineDraft(draft.localId); refresh() }}>
+                    <Button size="sm" variant="ghost" icon={Trash2} onClick={() => { void removeOfflineDraft(draft.localId).then(refresh) }}>
                       Discard
                     </Button>
                   </div>
@@ -132,9 +137,10 @@ export function DraftsPage() {
                 icon={Trash2}
                 onClick={() => {
                   if (window.confirm('Discard every offline draft on this device? This cannot be undone.')) {
-                    clearOfflineDrafts()
-                    setResults([])
-                    refresh()
+                    void clearOfflineDrafts().then(() => {
+                      setResults([])
+                      refresh()
+                    })
                   }
                 }}
               >

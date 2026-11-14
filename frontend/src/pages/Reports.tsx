@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { BarChart3, Download, FileSpreadsheet, Filter, ShieldAlert, Users } from 'lucide-react'
+import { BarChart3, Download, FileSpreadsheet, Filter, ShieldAlert, ShieldCheck, Users } from 'lucide-react'
 import { apiError, downloadFile, get } from '../lib/api'
 import { useStructure } from '../lib/hooks'
 import { formatDate, titleCase } from '../lib/utils'
@@ -23,7 +23,7 @@ import {
 } from '../components/ui'
 import { useToast } from '../components/toast'
 
-type ReportKind = 'term' | 'year-end' | 'high-risk' | 'class' | 'teacher-activity' | 'communication'
+type ReportKind = 'term' | 'year-end' | 'high-risk' | 'class' | 'teacher-activity' | 'communication' | 'ledger-integrity'
 
 type FeeRow = { classId: string; name: string; students: number; incidents: number; averageBalance: number; risk: Record<string, number> }
 
@@ -94,6 +94,23 @@ type CommunicationReport = {
   total: number
 }
 
+type LedgerReconciliation = {
+  term: { id: string; name: string; number?: number } | null
+  studentsChecked: number
+  studentsMatched: number
+  transactionsChecked: number
+  issues: {
+    studentId: string
+    studentName: string
+    studentRef: string
+    ledgerId: string
+    kind: 'broken_chain' | 'math_mismatch' | 'balance_drift' | 'negative_balance' | 'duplicate_deduction'
+    detail: string
+  }[]
+  healthy: boolean
+  generatedAt: string
+}
+
 const KINDS: { key: ReportKind; label: string }[] = [
   { key: 'term', label: 'Term report' },
   { key: 'year-end', label: 'Year-end' },
@@ -101,6 +118,7 @@ const KINDS: { key: ReportKind; label: string }[] = [
   { key: 'class', label: 'Class analysis' },
   { key: 'teacher-activity', label: 'Teacher activity' },
   { key: 'communication', label: 'Communication' },
+  { key: 'ledger-integrity', label: 'Ledger integrity' },
 ]
 
 const balanceTone = (value: number) =>
@@ -124,7 +142,10 @@ export function ReportsPage() {
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['report', kind, params],
-    queryFn: () => get<unknown>(`/reports/${kind}`, params),
+    queryFn: () =>
+      kind === 'ledger-integrity'
+        ? get<LedgerReconciliation>('/discipline/ledger/reconciliation', { termId: filters.termId || undefined })
+        : get<unknown>(`/reports/${kind}`, params),
   })
 
   const exportCsv = async () => {
@@ -144,9 +165,11 @@ export function ReportsPage() {
         title="Reports & analytics"
         subtitle="Term, year-end, class, teacher and communication reporting with CSV export for leadership meetings and inspectors."
         actions={
-          <Button variant="secondary" icon={Download} onClick={exportCsv}>
-            Export CSV
-          </Button>
+          kind !== 'ledger-integrity' ? (
+            <Button variant="secondary" icon={Download} onClick={exportCsv}>
+              Export CSV
+            </Button>
+          ) : undefined
         }
       />
 
@@ -196,6 +219,7 @@ export function ReportsPage() {
           {kind === 'class' && <ClassView report={data as ClassReport} />}
           {kind === 'teacher-activity' && <TeacherView report={data as TeacherReport} />}
           {kind === 'communication' && <CommunicationView report={data as CommunicationReport} />}
+          {kind === 'ledger-integrity' && <LedgerIntegrityView report={data as LedgerReconciliation} />}
         </div>
       )}
     </div>
@@ -505,6 +529,72 @@ function CommunicationView({ report }: { report: CommunicationReport }) {
           </table>
         </div>
       </Card>
+    </>
+  )
+}
+
+function LedgerIntegrityView({ report }: { report: LedgerReconciliation }) {
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Integrity"
+          value={report.healthy ? 'Healthy' : `${report.issues.length} issue${report.issues.length === 1 ? '' : 's'}`}
+          tone={report.healthy ? 'emerald' : 'red'}
+          hint={report.term ? `${report.term.name} conduct ledger` : 'Active term ledger'}
+          icon={ShieldCheck}
+        />
+        <StatCard label="Students checked" value={report.studentsChecked} tone="brand" hint={`${report.studentsMatched} chained perfectly`} icon={Users} />
+        <StatCard label="Transactions" value={report.transactionsChecked} tone="ochre" hint="Immutable postings verified" icon={FileSpreadsheet} />
+        <StatCard label="Last run" value={formatDate(report.generatedAt, 'dd MMM · HH:mm')} tone="slate" hint="Re-run after any manual adjustment" />
+      </div>
+
+      <Card>
+        <CardHeader
+          icon={ShieldCheck}
+          title="Reconciliation findings"
+          subtitle="Ledger rows are immutable, so this report never rewrites history — each finding points an administrator at the exact row that needs an audit follow-up."
+        />
+        {report.issues.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-white/5 dark:text-slate-400">
+                <tr>
+                  <th className="px-4 py-2.5">Student</th>
+                  <th className="px-4 py-2.5">Finding</th>
+                  <th className="px-4 py-2.5">Detail</th>
+                  <th className="px-4 py-2.5">Record</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line dark:divide-[#1f2f49]">
+                {report.issues.map((issue, index) => (
+                  <tr key={`${issue.ledgerId}-${issue.kind}-${index}`}>
+                    <td className="px-4 py-2.5">
+                      <span className="font-medium">{issue.studentName}</span>
+                      <span className="block text-xs text-slate-400">{issue.studentRef}</span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <Badge tone="red">{titleCase(issue.kind.replace(/_/g, ' '))}</Badge>
+                    </td>
+                    <td className="max-w-[420px] px-4 py-2.5 text-xs text-slate-600 dark:text-slate-300">{issue.detail}</td>
+                    <td className="px-4 py-2.5 font-mono text-[11px] text-slate-400">{issue.ledgerId}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="p-6">
+            <EmptyState icon={ShieldCheck} title="Every ledger chain balances" message="Each posting links to the previous balance, deductions never push conduct below zero, and student balances match their latest ledger row." />
+          </div>
+        )}
+      </Card>
+
+      <Alert tone={report.healthy ? 'success' : 'warning'} title={report.healthy ? 'No action needed' : 'Audit follow-up required'}>
+        {report.healthy
+          ? 'The conduct ledger is internally consistent for this term. Run this check after restoring backups or applying any manual correction.'
+          : 'Do not edit ledger rows directly. Post a compensating adjustment through the approvals workflow, then re-run reconciliation to confirm the chain is healthy again.'}
+      </Alert>
     </>
   )
 }

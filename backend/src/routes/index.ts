@@ -3,6 +3,7 @@ import authRouter from './auth.routes.js'
 import usersRouter from './users.routes.js'
 import structureRouter from './structure.routes.js'
 import studentsRouter from './students.routes.js'
+import promotionsRouter from './promotions.routes.js'
 import parentsRouter from './parents.routes.js'
 import disciplineRouter from './discipline.routes.js'
 import approvalsRouter from './approvals.routes.js'
@@ -25,6 +26,7 @@ apiRouter.use('/auth', authRouter)
 apiRouter.use(usersRouter)
 apiRouter.use(structureRouter)
 apiRouter.use(studentsRouter)
+apiRouter.use(promotionsRouter)
 apiRouter.use(parentsRouter)
 apiRouter.use(disciplineRouter)
 apiRouter.use(approvalsRouter)

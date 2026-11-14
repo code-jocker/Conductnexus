@@ -77,14 +77,23 @@ userSchema.index({ status: 1, createdAt: -1 })
 
 export const User = model<IUser>('User', userSchema)
 
+export type SessionPlatform = 'web' | 'android' | 'ios' | 'unknown'
+
 export interface ISession extends Document {
   userId: Types.ObjectId
   tokenHash: string
   expiresAt: Date
   revokedAt?: Date
+  revokedReason?: string
   replacedByHash?: string
   ip?: string
   userAgent?: string
+  deviceId?: string
+  deviceName?: string
+  platform?: SessionPlatform
+  appVersion?: string
+  pushToken?: string
+  lastActiveAt?: Date
   createdAt: Date
 }
 
@@ -94,13 +103,21 @@ const sessionSchema = new Schema<ISession>(
     tokenHash: { type: String, required: true, unique: true },
     expiresAt: { type: Date, required: true },
     revokedAt: { type: Date },
+    revokedReason: { type: String },
     replacedByHash: { type: String },
     ip: { type: String },
     userAgent: { type: String },
+    deviceId: { type: String },
+    deviceName: { type: String },
+    platform: { type: String, enum: ['web', 'android', 'ios', 'unknown'] },
+    appVersion: { type: String },
+    pushToken: { type: String },
+    lastActiveAt: { type: Date },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 )
 sessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 })
+sessionSchema.index({ userId: 1, revokedAt: 1, lastActiveAt: -1 })
 
 export const Session = model<ISession>('Session', sessionSchema)
 
@@ -351,7 +368,7 @@ const settingsSchema = new Schema<ISettings>(
       repeatOffenceThreshold: { type: Number, default: 3 },
     },
     comms: {
-      whatsappEnabled: { type: Boolean, default: false },
+      whatsappEnabled: { type: Boolean, default: true },
       smsEnabled: { type: Boolean, default: false },
       quietHoursStart: { type: Number, default: 21 },
       quietHoursEnd: { type: Number, default: 6 },
