@@ -1,4 +1,4 @@
-import { env } from '../config/env.js'
+﻿import { env } from '../config/env.js'
 import { getSettings, Permission, Role, RolePermission, User, UserRole } from '../models/core.js'
 import { AcademicYear, ClassModel, Dormitory, Stream, Term } from '../models/school.js'
 import { LetterTemplate, NotificationTemplate, WhatsappSession } from '../models/communications.js'
@@ -6,6 +6,11 @@ import { Offence, Policy } from '../models/discipline.js'
 import { PERMISSIONS } from '../shared/permissions.js'
 import { ROLE_SEEDS } from '../shared/roles.js'
 import { logger } from '../shared/logger.js'
+import {
+  LETTER_TEMPLATE_LIBRARY,
+  NOTIFICATION_TEMPLATE_LIBRARY,
+  extractPlaceholders,
+} from '../data/templateLibrary.js'
 
 export async function seedRbac(): Promise<void> {
   await Permission.bulkWrite(
@@ -185,176 +190,10 @@ export async function seedSchoolDefaults(opts: {
     )
   }
 
-  const letterTemplates = [
-    {
-      type: 'warning',
-      name: 'Disciplinary warning letter',
-      subject: 'Official warning regarding {{studentName}}',
-      body:
-        'Dear {{parentName}},\n\nThis letter is to formally warn you about the conduct of {{studentName}} ({{studentId}}, {{className}}).\n\nIncident: {{incidentNumber}} — {{offenceName}}\nDate: {{incidentDate}}\nApproved deduction: {{deduction}} marks\nRemaining conduct marks: {{balance}}\n\nWe request your support in addressing this matter. Please contact the school for clarification.\n\nYours sincerely,\n{{schoolName}}',
-    },
-    {
-      type: 'parent_meeting_invitation',
-      name: 'Parent meeting invitation',
-      subject: 'Invitation to meet regarding {{studentName}}',
-      body:
-        'Dear {{parentName}},\n\nYou are invited to meet the school discipline team regarding {{studentName}} ({{className}}).\n\nDate: {{meetingDate}}\nTime: {{meetingTime}}\nVenue: {{venue}}\n\nPlease confirm your attendance.\n\nYours sincerely,\n{{schoolName}}',
-    },
-    {
-      type: 'serious_incident',
-      name: 'Serious incident notification',
-      subject: 'Serious incident notification — {{studentName}}',
-      body:
-        'Dear {{parentName}},\n\nWe are notifying you of a serious incident involving {{studentName}} on {{incidentDate}}.\n\nReference: {{incidentNumber}}\n\nA member of the school leadership team will contact you. Confidential investigation details are not shared in this notice.\n\nYours sincerely,\n{{schoolName}}',
-    },
-    {
-      type: 'hearing_invitation',
-      name: 'Disciplinary hearing invitation',
-      subject: 'Disciplinary hearing — {{studentName}}',
-      body:
-        'Dear {{parentName}},\n\nYou and {{studentName}} are invited to a disciplinary hearing.\n\nReference: {{caseNumber}}\nDate: {{meetingDate}}\nTime: {{meetingTime}}\nVenue: {{venue}}\n\nYou may bring supporting evidence and may be accompanied by a guardian.\n\nYours sincerely,\n{{schoolName}}',
-    },
-    {
-      type: 'suspension',
-      name: 'Suspension letter',
-      subject: 'Suspension decision — {{studentName}}',
-      body:
-        'Dear {{parentName}},\n\nFollowing a disciplinary decision, {{studentName}} ({{className}}) has been suspended in accordance with school policy.\n\nDecision reference: {{decisionRef}}\nEffective date: {{effectiveDate}}\nDuration: {{duration}}\n\nYou may appeal this decision within the timeframe stated in the school handbook.\n\nYours sincerely,\n{{schoolName}}',
-    },
-    {
-      type: 'expulsion_recommendation',
-      name: 'Expulsion recommendation',
-      subject: 'Expulsion recommendation — {{studentName}}',
-      body:
-        'Dear Parent/Guardian,\n\nThe school leadership has recommended expulsion for {{studentName}} following case {{decisionRef}}. This recommendation requires Headteacher approval before it becomes final.\n\nYours sincerely,\n{{schoolName}}',
-    },
-    {
-      type: 'expulsion_decision',
-      name: 'Expulsion decision',
-      subject: 'Expulsion decision — {{studentName}}',
-      body:
-        'Dear Parent/Guardian,\n\nFollowing due process, the Headteacher has approved the expulsion of {{studentName}} ({{className}}) effective {{effectiveDate}}.\n\nDecision reference: {{decisionRef}}\n\nAppeal rights and procedures are set out in the school handbook.\n\nYours sincerely,\n{{schoolName}}',
-    },
-    {
-      type: 'conduct_report',
-      name: 'Student conduct report',
-      subject: 'Conduct report — {{studentName}}',
-      body:
-        'Dear {{parentName}},\n\nPlease find the conduct summary for {{studentName}} ({{className}}) for {{termName}}.\n\nStarting marks: {{startingMarks}}\nDeductions: {{deductions}}\nRewards: {{rewards}}\nCurrent balance: {{balance}}\n\nYours sincerely,\n{{schoolName}}',
-    },
-    {
-      type: 'improvement_notice',
-      name: 'Student improvement notice',
-      subject: 'Conduct improvement plan — {{studentName}}',
-      body:
-        'Dear {{parentName}},\n\n{{studentName}} is participating in a behaviour improvement plan with the support of {{supportStaff}}.\n\nNext review: {{reviewDate}}\n\nWe appreciate your partnership.\n\nYours sincerely,\n{{schoolName}}',
-    },
-  ]
-  for (const t of letterTemplates) {
-    await LetterTemplate.findOneAndUpdate(
-      { type: t.type, name: t.name },
-      { $setOnInsert: { ...t, active: true } },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    )
-  }
+  await seedLetterTemplates()
+  await seedNotificationTemplates()
 
-  const notificationTemplates = [
-    {
-      key: 'incident_deduction',
-      name: 'Discipline deduction alert',
-      channel: 'whatsapp' as const,
-      subject: 'Conduct update for {{studentName}}',
-      body:
-        'Dear Parent/Guardian,\n\nThis is to inform you that {{studentName}} was involved in the following incident:\n\nIncident: {{offenceName}}\nDate: {{incidentDate}}\nMarks deducted: {{deduction}}\nRemaining conduct marks: {{balance}}\n\nPlease contact the school if further clarification is required.\n\nConductNexus — School Discipline Management.',
-    },
-    {
-      key: 'serious_incident',
-      name: 'Serious incident alert',
-      channel: 'whatsapp' as const,
-      subject: 'Important school notice',
-      body:
-        'Dear Parent/Guardian,\n\nA serious incident involving {{studentName}} has been recorded and is under review. A member of the school leadership team will contact you.\n\nConductNexus — School Discipline Management.',
-    },
-    {
-      key: 'high_risk',
-      name: 'High-risk student alert',
-      channel: 'in_app' as const,
-      subject: 'Student risk escalation',
-      body: '{{studentName}} ({{className}}) has moved to {{riskLevel}} risk. Current conduct balance: {{balance}}.',
-    },
-    {
-      key: 'meeting_invitation',
-      name: 'Meeting invitation',
-      channel: 'whatsapp' as const,
-      subject: 'Meeting invitation',
-      body:
-        'Dear Parent/Guardian,\n\nYou are invited to a meeting regarding {{studentName}} on {{meetingDate}} at {{meetingTime}}.\n\nVenue: {{venue}}\n\nConductNexus — School Discipline Management.',
-    },
-    {
-      key: 'warning_letter',
-      name: 'Warning letter notice',
-      channel: 'whatsapp' as const,
-      subject: 'Official letter issued',
-      body: 'An official {{letterType}} letter has been issued for {{studentName}}. Please check your email or contact the school.',
-    },
-    {
-      key: 'follow_up_reminder',
-      name: 'Follow-up reminder',
-      channel: 'in_app' as const,
-      subject: 'Follow-up due',
-      body: 'Follow-up for {{studentName}} is due on {{dueDate}}.',
-    },
-    {
-      key: 'conduct_improvement',
-      name: 'Conduct improvement notification',
-      channel: 'whatsapp' as const,
-      subject: 'Positive conduct update',
-      body: 'We are pleased to share that {{studentName}} has been recognised for positive behaviour: {{title}}.',
-    },
-    // ── Kinyarwanda variants (selected when school language is rw) ──
-    {
-      key: 'incident_deduction_rw',
-      name: 'Itangaziso ry’isoherezwa ry’amanota (Ikinyarwanda)',
-      channel: 'whatsapp' as const,
-      language: 'rw' as const,
-      subject: 'Amakuru y’imyitwarire ya {{studentName}}',
-      body:
-        'Muraho Umubyeyi/Umurezi,\n\nDukumenyesha ko {{studentName}} yari mu cyerekezo gikurikira:\n\nIcyerekezo: {{offenceName}}\nItariki: {{incidentDate}}\nAmanota yisoherejwe: {{deduction}}\nAmanota asigaye mu myitwarire: {{balance}}\n\nMugire icyo mwifasha. Twihutisha kuvugana na mwe.\n\nConductNexus — Uburyo bwa disipulini.',
-    },
-    {
-      key: 'serious_incident_rw',
-      name: 'Itangaziso ry’icyerekezo gikomeye (Ikinyarwanda)',
-      channel: 'whatsapp' as const,
-      language: 'rw' as const,
-      subject: 'Itangaziso rikomeye',
-      body:
-        'Muraho Umubyeyi/Umurezi,\n\nHari icyerekezo gikomeye gikorwa na {{studentName}} cyafashwe kandi kiri gusuzumwa. Umuyobozi w’ishuri azabwo guvugana na mwe.\n\nConductNexus — Uburyo bwa disipulini.',
-    },
-    {
-      key: 'meeting_invitation_rw',
-      name: 'Ubutumire mu nama (Ikinyarwanda)',
-      channel: 'whatsapp' as const,
-      language: 'rw' as const,
-      subject: 'Ubutumire mu nama',
-      body:
-        'Muraho Umubyeyi/Umurezi,\n\nMutabirwa mu nama yerekeye kuri {{studentName}} ku ya {{meetingDate}} saa {{meetingTime}}.\n\nAhantu: {{venue}}\n\nConductNexus — Uburyo bwa disipulini.',
-    },
-    {
-      key: 'conduct_improvement_rw',
-      name: 'Itangaziso ry’imyitwarire myiza (Ikinyarwanda)',
-      channel: 'whatsapp' as const,
-      language: 'rw' as const,
-      subject: 'Amakuru y’imyitwarire myiza',
-      body: 'Twishimiye kukumenyesha ko {{studentName}} yashimwe kubera imyitwarire myiza: {{title}}.',
-    },
-  ]
-  for (const t of notificationTemplates) {
-    await NotificationTemplate.findOneAndUpdate(
-      { key: t.key },
-      { $setOnInsert: { ...t, active: true } },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    )
-  }
+
 
   await WhatsappSession.findOneAndUpdate(
     { sessionName: env.WHATSAPP_SESSION },
@@ -395,4 +234,121 @@ export async function seedAdminFromEnv(): Promise<void> {
   const settings = await getSettings()
   settings.setupCompleted = true
   await settings.save()
+}
+
+/**
+ * Upserts the notification template library as one record per language.
+ *
+ * Existing records are never deleted. A legacy record (one that has no
+ * `originalBody`, i.e. it predates the library) is upgraded to the canonical
+ * professional wording; once a record carries originals, administrator edits are
+ * preserved and only genuinely new templates are inserted.
+ */
+export async function seedNotificationTemplates(): Promise<void> {
+  for (const tpl of NOTIFICATION_TEMPLATE_LIBRARY) {
+    const variants: { key: string; language: 'en' | 'rw'; subject: string; body: string }[] = [
+      { key: tpl.key, language: 'en', subject: tpl.en.subject, body: tpl.en.body },
+      { key: `${tpl.key}_rw`, language: 'rw', subject: tpl.rw.subject, body: tpl.rw.body },
+    ]
+
+    for (const v of variants) {
+      const existing = await NotificationTemplate.findOne({ key: v.key }).lean()
+      if (!existing) {
+        await NotificationTemplate.create({
+          key: v.key,
+          name: v.language === 'rw' ? tpl.nameRw : tpl.name,
+          description: tpl.description,
+          category: tpl.category,
+          channel: tpl.channel,
+          subject: v.subject,
+          body: v.body,
+          placeholders: extractPlaceholders(v.subject, v.body),
+          active: true,
+          language: v.language,
+          originalSubject: v.subject,
+          originalBody: v.body,
+          version: 1,
+        })
+        continue
+      }
+      if (!existing.originalBody) {
+        await NotificationTemplate.updateOne(
+          { _id: existing._id },
+          {
+            $set: {
+              name: v.language === 'rw' ? tpl.nameRw : tpl.name,
+              description: tpl.description,
+              category: tpl.category,
+              channel: tpl.channel,
+              subject: v.subject,
+              body: v.body,
+              placeholders: extractPlaceholders(v.subject, v.body),
+              language: v.language,
+              originalSubject: v.subject,
+              originalBody: v.body,
+              version: 1,
+            },
+          },
+        )
+      }
+    }
+  }
+}
+
+/**
+ * Upserts the official letter template library. Like notification templates,
+ * legacy records are upgraded once to carry originals; later administrator edits
+ * are preserved.
+ */
+export async function seedLetterTemplates(): Promise<void> {
+  for (const tpl of LETTER_TEMPLATE_LIBRARY) {
+    const existing = await LetterTemplate.findOne({ type: tpl.type }).lean()
+    const placeholders = extractPlaceholders(tpl.en.subject, tpl.en.body, tpl.rw.subject, tpl.rw.body)
+
+    if (!existing) {
+      await LetterTemplate.create({
+        type: tpl.type,
+        name: tpl.name,
+        nameRw: tpl.nameRw,
+        description: tpl.description,
+        category: tpl.category,
+        subject: tpl.en.subject,
+        body: tpl.en.body,
+        subjectRw: tpl.rw.subject,
+        bodyRw: tpl.rw.body,
+        placeholders,
+        active: true,
+        originalSubject: tpl.en.subject,
+        originalBody: tpl.en.body,
+        originalSubjectRw: tpl.rw.subject,
+        originalBodyRw: tpl.rw.body,
+        version: 1,
+      })
+      continue
+    }
+
+    if (!existing.originalBody || !existing.bodyRw) {
+      await LetterTemplate.updateOne(
+        { _id: existing._id },
+        {
+          $set: {
+            name: tpl.name,
+            nameRw: tpl.nameRw,
+            description: tpl.description,
+            category: tpl.category,
+            subject: tpl.en.subject,
+            body: tpl.en.body,
+            subjectRw: tpl.rw.subject,
+            bodyRw: tpl.rw.body,
+            placeholders,
+            originalSubject: tpl.en.subject,
+            originalBody: tpl.en.body,
+            originalSubjectRw: tpl.rw.subject,
+            originalBodyRw: tpl.rw.body,
+            version: 1,
+          },
+        },
+      )
+    }
+  }
 }

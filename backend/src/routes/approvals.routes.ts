@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import { Router, type NextFunction, type Request, type Response } from 'express'
 import { z } from 'zod'
 import { authenticate, requirePermission } from '../middleware/auth.js'
 import { asyncHandler, ok, pagedMeta, parsePagination, validate } from '../shared/http.js'
@@ -10,8 +10,46 @@ import { Types } from 'mongoose'
 const router = Router()
 router.use(authenticate)
 
+/**
+ * Permissions that can act on at least one kind of approval. The list endpoints
+ * are guarded by this set because they aggregate approvals of many types; each
+ * individual record is still filtered by its own `requiredPermission`.
+ */
+const APPROVAL_PERMISSIONS = [
+  'marks.adjust.approve',
+  'incidents.review',
+  'letters.approve',
+  'safeguarding.escalate',
+  'students.promote.approve',
+  'investigations.decide',
+] as const
+
+/**
+ * Record-level guard for `/approvals/:id*`.
+ *
+ * Approval routes cannot use a single static permission: every approval carries
+ * its own `requiredPermission`, and the requester may read their own record.
+ * Loading the record here authorizes against the permission that approval
+ * actually demands, and fails closed with 404 (missing) before 403 (unauthorized).
+ */
+async function loadApproval(req: Request, res: Response, next: NextFunction) {
+  try {
+    const approval = await Approval.findById(req.params.id).lean()
+    if (!approval) throw ApiError.notFound('Approval not found')
+    const auth = req.auth!
+    if (!auth.permissions.has(approval.requiredPermission) && String(approval.requestedBy) !== String(auth.userId)) {
+      throw ApiError.forbidden('You are not authorized to view this approval')
+    }
+    res.locals.approval = approval
+    next()
+  } catch (err) {
+    next(err)
+  }
+}
+
 router.get(
   '/approvals',
+  requirePermission(...APPROVAL_PERMISSIONS),
   asyncHandler(async (req, res) => {
     const ctx = req.auth!
     const { page, pageSize, skip } = parsePagination(req.query)
@@ -46,6 +84,7 @@ router.get(
 
 router.get(
   '/approvals/pending/count',
+  requirePermission(...APPROVAL_PERMISSIONS),
   asyncHandler(async (req, res) => {
     const items = await pendingApprovalsFor(req.auth!)
     ok(res, { count: items.length })
@@ -54,6 +93,7 @@ router.get(
 
 router.get(
   '/approvals/:id',
+  loadApproval,
   asyncHandler(async (req, res) => {
     const approval = await Approval.findById(req.params.id)
       .populate('studentId', 'fullName studentId classId currentBalance')
@@ -61,9 +101,6 @@ router.get(
       .populate('decidedBy', 'name position')
       .lean()
     if (!approval) throw ApiError.notFound('Approval not found')
-    if (!req.auth!.permissions.has(approval.requiredPermission) && String(approval.requestedBy) !== String(req.auth!.userId)) {
-      throw ApiError.forbidden('You are not authorized to view this approval')
-    }
     ok(res, approval)
   }),
 )
@@ -74,6 +111,7 @@ const decisionBody = z.object({
 
 router.post(
   '/approvals/:id/approve',
+  loadApproval,
   validate({ body: decisionBody }),
   asyncHandler(async (req, res) => {
     const approval = await Approval.findById(req.params.id)
@@ -85,6 +123,7 @@ router.post(
 
 router.post(
   '/approvals/:id/reject',
+  loadApproval,
   validate({ body: z.object({ reason: z.string().trim().min(3).max(2000) }) }),
   asyncHandler(async (req, res) => {
     const result = await decideApproval(req.auth!, req.params.id, { decision: 'reject', notes: req.body.reason }, req)
@@ -94,6 +133,7 @@ router.post(
 
 router.post(
   '/approvals/:id/request-info',
+  loadApproval,
   validate({ body: z.object({ notes: z.string().trim().min(3).max(2000) }) }),
   asyncHandler(async (req, res) => {
     const result = await decideApproval(req.auth!, req.params.id, { decision: 'request_info', notes: req.body.notes }, req)
@@ -103,9 +143,9 @@ router.post(
 
 router.get(
   '/approvals/:id/timeline',
+  loadApproval,
   asyncHandler(async (req, res) => {
-    const approval = await Approval.findById(req.params.id).lean()
-    if (!approval) throw ApiError.notFound('Approval not found')
+    const approval = res.locals.approval as { _id: Types.ObjectId }
     const { AuditLog } = await import('../models/governance.js')
     const logs = await AuditLog.find({
       resourceType: 'Approval',

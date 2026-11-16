@@ -52,9 +52,15 @@ export async function createLetter(
   }
   if (parent) vars.parentName = parent.name
 
-  const body = input.body ?? (template ? renderTemplate(template.body, vars) : '')
+  // The letter is issued in one language and that choice is fixed at creation,
+  // so a later settings change cannot make an approved letter render differently.
+  const language: 'en' | 'rw' = settings.academic.language === 'rw' ? 'rw' : 'en'
+  const templateBody = template ? (language === 'rw' ? template.bodyRw || template.body : template.body) : ''
+  const templateSubject = template ? (language === 'rw' ? template.subjectRw || template.subject : template.subject) : ''
+
+  const body = input.body ?? (template ? renderTemplate(templateBody, vars) : '')
   if (!body.trim()) throw ApiError.badRequest('A letter body is required')
-  const subject = input.subject ?? (template ? renderTemplate(template.subject, vars) : 'Official school letter')
+  const subject = input.subject ?? (template ? renderTemplate(templateSubject, vars) : 'Official school letter')
 
   const letter = await Letter.create({
     reference: await nextRef('LTR', 5),
@@ -67,6 +73,7 @@ export async function createLetter(
     preparedBy: ctx.userId,
     templateId: template?._id,
     confidentiality: HIGH_IMPACT_LETTER_TYPES.has(input.type) ? 'restricted' : 'standard',
+    language,
     studentSnapshot: {
       fullName: student.fullName,
       studentId: student.studentId,
@@ -145,10 +152,41 @@ export async function issueLetter(ctx: AuthContext, letterId: string, req?: Requ
   return letter
 }
 
+const LETTER_LABELS = {
+  en: {
+    reference: 'Reference',
+    date: 'Date',
+    student: 'Student',
+    class: 'Class',
+    yoursFaithfully: 'Yours faithfully,',
+    signature: 'Signature',
+    stamp: 'School stamp',
+    issuedTo: 'Issued to',
+  },
+  rw: {
+    reference: 'Nomero y’ibarwa',
+    date: 'Itariki',
+    student: 'Umunyeshuri',
+    class: 'Umwaka',
+    yoursFaithfully: 'Mugire amahoro,',
+    signature: 'Umukono',
+    stamp: 'Ikimenyetso cy’ishuri',
+    issuedTo: 'Uwo rigenewe',
+  },
+} as const
+
+/**
+ * Renders an issued letter to A4 PDF.
+ *
+ * The school identity block (logo, name, address, contacts), reference number,
+ * date and recipient come from school settings and the letter record, so a
+ * template only needs to carry the subject and the formal body.
+ */
 export async function generateLetterPdf(letterId: string): Promise<Buffer> {
   const letter = await Letter.findById(letterId)
   if (!letter) throw ApiError.notFound('Letter not found')
   const settings = await getSettings()
+  const labels = LETTER_LABELS[letter.language ?? 'en']
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 56 })
     const chunks: Buffer[] = []
@@ -156,27 +194,54 @@ export async function generateLetterPdf(letterId: string): Promise<Buffer> {
     doc.on('end', () => resolve(Buffer.concat(chunks)))
     doc.on('error', reject)
 
-    doc.fillColor('#0b1b33').fontSize(18).font('Helvetica-Bold').text(settings.school.name || 'ConductNexus School')
+    let y = doc.y
+    const logoUrl = settings.school.logoUrl
+    if (logoUrl && /^(https?:\/\/|data:image\/)/.test(logoUrl)) {
+      // A missing or unreachable logo must never block an official letter.
+      try {
+        doc.image(logoUrl, 56, y, { fit: [56, 56] })
+        y = Math.max(y, y + 56)
+      } catch {
+        /* fall through to the text-only header */
+      }
+    }
+
+    doc.fillColor('#0b1b33').fontSize(18).font('Helvetica-Bold').text(settings.school.name || 'ConductNexus School', 56, y)
     doc.fillColor('#64748b').fontSize(9).font('Helvetica').text(settings.school.address || '')
     doc.text(settings.school.phone ? `Tel: ${settings.school.phone}` : '')
-    doc.text(settings.school.email || '')
+    if (settings.school.email) doc.text(settings.school.email)
+    if (settings.school.website) doc.text(settings.school.website)
     doc.moveDown(0.6)
-    doc.strokeColor('#d97c3b').lineWidth(3).moveTo(56, doc.y).lineTo(539, doc.y).stroke()
+    doc.strokeColor('#d97c3b').lineWidth(3).moveTo(56, doc.y).moveTo(56, doc.y).lineTo(539, doc.y).stroke()
     doc.moveDown(1)
-    doc.fillColor('#172033').fontSize(10).text(`Reference: ${letter.reference}`)
-    doc.text(`Date: ${new Date(letter.issuedAt ?? letter.createdAt).toLocaleDateString('en-RW', { timeZone: 'Africa/Kigali' })}`)
-    doc.text(`Student: ${letter.studentSnapshot.fullName} (${letter.studentSnapshot.studentId})`)
+
+    doc.fillColor('#172033').fontSize(10)
+    doc.text(`${labels.reference}: ${letter.reference}`)
+    doc.text(`${labels.date}: ${new Date(letter.issuedAt ?? letter.createdAt).toLocaleDateString('en-RW', { timeZone: 'Africa/Kigali' })}`)
+    doc.text(`${labels.student}: ${letter.studentSnapshot.fullName} (${letter.studentSnapshot.studentId})`)
+    if (letter.studentSnapshot.className) doc.text(`${labels.class}: ${letter.studentSnapshot.className}`)
     doc.moveDown(1)
+
     doc.fontSize(13).font('Helvetica-Bold').fillColor('#0b1b33').text(letter.subject)
     doc.moveDown(0.8)
     doc.fontSize(11).font('Helvetica').fillColor('#172033').text(letter.body, { lineGap: 3 })
+    doc.moveDown(2.5)
+
+    // Signature block and stamp placeholder.
+    const signatureTop = doc.y
+    doc.fontSize(10).fillColor('#172033').text(labels.yoursFaithfully)
+    doc.moveDown(2.5)
+    doc.font('Helvetica-Bold').text('____________________________')
+    doc.font('Helvetica').fillColor('#64748b').fontSize(8).text(labels.signature)
+    doc.moveDown(1.5)
+    doc.fontSize(8).fillColor('#94a3b8').text('____________________________')
+    doc.text(labels.stamp)
+    if (doc.y < signatureTop) doc.y = signatureTop
+
     doc.moveDown(2)
-    doc.fontSize(10).text('Yours sincerely,')
-    doc.moveDown(2)
-    doc.font('Helvetica-Bold').text('Headteacher')
-    doc.font('Helvetica').fillColor('#64748b').fontSize(8).text(settings.school.name)
-    doc.moveDown(2)
-    doc.fillColor('#94a3b8').fontSize(7).text('Generated by ConductNexus — Building Better Behaviour Through Connected School Discipline. Powered by Shyaka clever prince a.k.a Code jocker.')
+    doc.fillColor('#94a3b8').fontSize(7).text(
+      'Generated by ConductNexus — Building Better Behaviour Through Connected School Discipline.',
+    )
     doc.end()
   })
 }

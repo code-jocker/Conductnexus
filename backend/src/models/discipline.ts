@@ -407,9 +407,10 @@ export interface IBulkResultLine {
 export interface IBulkOperation extends Document {
   reference: string
   type: 'deduction' | 'reward'
-  scope: 'class' | 'stream' | 'selection'
+  scope: 'class' | 'stream' | 'dormitory' | 'school' | 'selection'
   classId?: Types.ObjectId
   streamId?: Types.ObjectId
+  dormitoryId?: Types.ObjectId
   offenceId?: Types.ObjectId
   points?: number
   reason: string
@@ -421,6 +422,7 @@ export interface IBulkOperation extends Document {
   applied: number
   skipped: number
   failed: number
+  exclusions: { studentId: Types.ObjectId; name: string; reason: string }[]
   results: IBulkResultLine[]
   clientReference?: string
   createdAt: Date
@@ -446,9 +448,10 @@ const bulkOperationSchema = new Schema<IBulkOperation>(
   {
     reference: { type: String, required: true, unique: true },
     type: { type: String, enum: ['deduction', 'reward'], required: true },
-    scope: { type: String, enum: ['class', 'stream', 'selection'], required: true },
+    scope: { type: String, enum: ['class', 'stream', 'dormitory', 'school', 'selection'], required: true },
     classId: { type: Schema.Types.ObjectId, ref: 'Class' },
     streamId: { type: Schema.Types.ObjectId, ref: 'Stream' },
+    dormitoryId: { type: Schema.Types.ObjectId, ref: 'Dormitory' },
     offenceId: { type: Schema.Types.ObjectId, ref: 'Offence' },
     points: { type: Number },
     reason: { type: String, required: true },
@@ -460,6 +463,14 @@ const bulkOperationSchema = new Schema<IBulkOperation>(
     applied: { type: Number, default: 0 },
     skipped: { type: Number, default: 0 },
     failed: { type: Number, default: 0 },
+    exclusions: [
+      {
+        studentId: { type: Schema.Types.ObjectId, ref: 'Student' },
+        name: String,
+        reason: String,
+        _id: false,
+      },
+    ],
     results: { type: [bulkResultLineSchema], default: [] },
     clientReference: { type: String },
     completedAt: { type: Date },

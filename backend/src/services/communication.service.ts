@@ -1,3 +1,6 @@
+import { execFile } from 'node:child_process'
+import path from 'node:path'
+import { promisify } from 'node:util'
 import { Types } from 'mongoose'
 import { getSettings } from '../models/core.js'
 import { GuardianLink, Parent, Student } from '../models/school.js'
@@ -6,6 +9,9 @@ import { Letter, MessageQueue, NotificationTemplate, WhatsappSession } from '../
 import { ApiError } from '../shared/errors.js'
 import { logger } from '../shared/logger.js'
 import { env, whatsappEnabled } from '../config/env.js'
+import { extractPlaceholders } from '../data/templateLibrary.js'
+
+const execFileAsync = promisify(execFile)
 
 export type ParentMessageInput = {
   studentId: string | Types.ObjectId
@@ -20,6 +26,36 @@ export type ParentMessageInput = {
 
 export function renderTemplate(template: string, vars: Record<string, string | number | undefined>): string {
   return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key: string) => String(vars[key] ?? ''))
+}
+
+/** Placeholders still present in already-rendered text. */
+export function unresolvedPlaceholders(text: string): string[] {
+  return [...new Set([...text.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((m) => m[1]))]
+}
+
+/**
+ * Placeholders a template declares that the caller supplied no value for.
+ *
+ * Rendering replaces unknown placeholders with an empty string, so a rendered
+ * body cannot be inspected after the fact — the check has to run against the
+ * template text and the supplied variables.
+ */
+export function missingPlaceholders(text: string, vars: Record<string, string | number | undefined>): string[] {
+  return extractPlaceholders(text).filter((p) => vars[p] === undefined)
+}
+
+/**
+ * A message must never reach a guardian with an unfilled placeholder: it reads
+ * as a system fault and destroys trust in official communication. Rendering is
+ * validated before anything is queued, and the offending placeholders are named
+ * so the operator can fix the data or the template.
+ */
+export function assertNoUnresolvedPlaceholders(missing: string[], label: string): void {
+  if (missing.length) {
+    throw ApiError.badRequest(
+      `${label} has unresolved placeholders (${[...new Set(missing)].join(', ')}); provide the missing values before sending.`,
+    )
+  }
 }
 
 /**
@@ -92,6 +128,19 @@ export async function queueParentMessage(input: ParentMessageInput): Promise<{ q
     ...input.extraVars,
   }
   const renderedBody = renderTemplate(template.body, vars)
+  const renderedSubject = template.subject ? renderTemplate(template.subject, vars) : ''
+  // Refuse to queue anything with an unfilled placeholder. Failing here is
+  // deliberate: a half-rendered message is worse than a delayed one.
+  assertNoUnresolvedPlaceholders(
+    missingPlaceholders(template.body, vars),
+    `Template "${input.templateKey}" body`,
+  )
+  if (template.subject) {
+    assertNoUnresolvedPlaceholders(
+      missingPlaceholders(template.subject, vars),
+      `Template "${input.templateKey}" subject`,
+    )
+  }
   // Every parent-facing (WhatsApp) message carries the parent-portal link so
   // guardians can review authorised, linked-child details.
   const body = template.channel === 'whatsapp' ? `${renderedBody}\n\nParent portal: ${portalUrl}` : renderedBody
@@ -117,7 +166,7 @@ export async function queueParentMessage(input: ParentMessageInput): Promise<{ q
         incidentId: input.incidentId,
         letterId: input.letterId,
         templateKey: input.templateKey,
-        subject: template.subject ? renderTemplate(template.subject, vars) : undefined,
+        subject: renderedSubject || undefined,
         body,
         status: 'queued',
         maxAttempts: settings.comms.retryLimit,
@@ -154,6 +203,103 @@ type WaState = {
 
 const wa: WaState = { client: null, status: 'disconnected' }
 let initializedModule = false
+/** Bounded exponential backoff so a dropped link recovers without an admin click. */
+let reconnectTimer: NodeJS.Timeout | null = null
+let reconnectAttempts = 0
+const RECONNECT_MAX_ATTEMPTS = 6
+const RECONNECT_BASE_MS = 30_000
+
+function clearReconnectTimer() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+}
+
+/** Absolute path of the browser profile that holds the saved WhatsApp link. */
+function whatsappProfileDir(): string {
+  return path.resolve(process.cwd(), 'storage/whatsapp-session', `session-${env.WHATSAPP_SESSION}`)
+}
+
+/**
+ * Kill browser processes still holding the WhatsApp profile.
+ *
+ * The profile directory can only be used by one browser. If the previous
+ * process was killed abruptly (SIGKILL, crash, container stop) its browser is
+ * orphaned and keeps the profile locked, so the saved link cannot be restored
+ * and the gateway falls back to demanding a QR scan. Reaping the orphans is what
+ * lets a restart reconnect without re-linking.
+ */
+async function reapOrphanedWhatsappBrowsers(): Promise<number> {
+  const profile = whatsappProfileDir()
+  try {
+    const script =
+      process.platform === 'win32'
+        ? [
+            `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |`,
+            `Where-Object { $_.CommandLine -like '*${profile}*' } |`,
+            `ForEach-Object { $_.ProcessId }`,
+          ].join(' ')
+        : `pgrep -f ${JSON.stringify(profile)} || true`
+    const { stdout } = await execFileAsync(script, { shell: true, timeout: 20_000 })
+    const pids = String(stdout)
+      .split(/\r?\n/)
+      .map((line) => Number.parseInt(line.trim(), 10))
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
+    for (const pid of pids) {
+      try {
+        if (process.platform === 'win32') await execFileAsync(`taskkill /PID ${pid} /T /F`, { timeout: 20_000 })
+        else process.kill(pid, 'SIGKILL')
+      } catch (err) {
+        logger.debug({ err, pid }, 'Could not reap orphaned WhatsApp browser')
+      }
+    }
+    if (pids.length > 0) {
+      logger.warn({ reaped: pids.length, profile }, 'Cleared orphaned WhatsApp browser processes')
+    }
+    return pids.length
+  } catch (err) {
+    logger.debug({ err }, 'Orphan scan skipped')
+    return 0
+  }
+}
+
+/**
+ * Drop a client without leaving its browser behind.
+ *
+ * Every failure path used to clear `wa.client` instead of destroying it, which
+ * leaked a Chrome process per attempt — the direct cause of the QR loop.
+ */
+async function retireClient(client: unknown) {
+  if (wa.client === client) wa.client = null
+  try {
+    await (client as { destroy?: () => Promise<void> } | null)?.destroy?.()
+  } catch (err) {
+    logger.warn({ err }, 'WhatsApp browser destroy failed')
+  }
+}
+
+function scheduleReconnect() {
+  if (!whatsappEnabled) return
+  if (reconnectTimer) return
+  if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+    logger.warn(
+      { attempts: reconnectAttempts },
+      'WhatsApp reconnect attempts exhausted; an administrator must re-link the phone',
+    )
+    return
+  }
+  const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, 10 * 60_000)
+  reconnectAttempts += 1
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    logger.info({ attempt: reconnectAttempts, delayMs: delay }, 'Retrying WhatsApp session')
+    startWhatsapp()
+      .then(() => undefined)
+      .catch((err) => logger.error({ err }, 'WhatsApp reconnect attempt failed'))
+  }, delay)
+  reconnectTimer.unref?.()
+}
 
 async function persistStatus(status: string, extra: Record<string, unknown> = {}) {
   wa.status = status
@@ -162,6 +308,41 @@ async function persistStatus(status: string, extra: Record<string, unknown> = {}
     { $set: { status, ...extra } },
     { upsert: true },
   )
+}
+
+/**
+ * whatsapp-web.js surfaces puppeteer's raw wait errors ("Waiting failed") when
+ * the Web client never reaches a usable state. Translate the known ones so an
+ * administrator sees the next action instead of a library string.
+ */
+const WA_ERROR_HINTS: Array<{ test: RegExp; hint: string }> = [
+  {
+    test: /waiting failed|timed? ?out|timeout/i,
+    hint: 'WhatsApp Web did not finish loading. Re-link the phone (WhatsApp → Linked devices → Link a device) and keep the school phone online.',
+  },
+  {
+    test: /conflict|stream.*(conflict|replace)|replaced/i,
+    hint: 'This number was linked somewhere else, which replaced the session. Scan the QR code again on the school phone.',
+  },
+  {
+    test: /not.?authorized|logged out|401|403/i,
+    hint: 'The link was revoked or expired. Scan the QR code again on the school phone.',
+  },
+  {
+    test: /enotfound|econnrefused|net::err|network|socket hang up/i,
+    hint: 'The server cannot reach WhatsApp Web. Check outbound HTTPS to web.whatsapp.com from this host.',
+  },
+  {
+    test: /target closed|browser.*closed|protocol error/i,
+    hint: 'The browser session closed unexpectedly. Restarting the gateway now.',
+  },
+]
+
+export function explainWhatsAppError(raw: unknown): string {
+  const message = (raw instanceof Error ? raw.message : String(raw ?? '')).trim()
+  if (!message) return ''
+  const match = WA_ERROR_HINTS.find((entry) => entry.test.test(message))
+  return match ? `${message} — ${match.hint}` : message
 }
 
 export async function startWhatsapp(phoneNumber?: string): Promise<{ status: string; message: string }> {
@@ -177,6 +358,11 @@ export async function startWhatsapp(phoneNumber?: string): Promise<{ status: str
     // Switching an unlinked session to phone pairing: restart the browser cleanly.
     await stopWhatsapp()
   }
+  // A manual connect supersedes any scheduled retry.
+  clearReconnectTimer()
+  // Clear browsers left behind by an abrupt previous exit so the saved link can
+  // be restored instead of demanding a fresh QR scan.
+  await reapOrphanedWhatsappBrowsers()
 
   try {
     const spec = 'whatsapp-web.js'
@@ -233,6 +419,8 @@ export async function startWhatsapp(phoneNumber?: string): Promise<{ status: str
     client.on('ready', async () => {
       if (!isCurrent()) return
       const info = client.info
+      reconnectAttempts = 0
+      clearReconnectTimer()
       await persistStatus('ready', {
         lastConnectedAt: new Date(),
         qrDataUrl: null,
@@ -241,22 +429,29 @@ export async function startWhatsapp(phoneNumber?: string): Promise<{ status: str
         info: { pushname: info?.pushname, number: info?.wid?.user },
       })
       logger.info('WhatsApp session ready')
+      // Messages parked while the channel was down must not wait for the next
+      // worker tick to start flowing again.
+      void processMessageQueue().catch((err) => logger.error({ err }, 'Queue flush after WhatsApp ready failed'))
     })
     client.on('auth_failure', async (msg: string) => {
       if (!isCurrent()) return
-      await persistStatus('auth_failure', { lastError: msg })
+      await retireClient(client)
+      await persistStatus('auth_failure', { lastError: explainWhatsAppError(msg) })
+      scheduleReconnect()
     })
     client.on('disconnected', async (reason: string) => {
       if (!isCurrent()) return
-      await persistStatus('disconnected', { lastError: String(reason) })
-      wa.client = null
+      await retireClient(client)
+      await persistStatus('disconnected', { lastError: explainWhatsAppError(reason) })
+      scheduleReconnect()
     })
 
     wa.initPromise = client.initialize().catch(async (err: Error) => {
       logger.error({ err }, 'WhatsApp initialization failed')
       if (!isCurrent()) return
-      await persistStatus('failed', { lastError: err.message })
-      wa.client = null
+      await retireClient(client)
+      await persistStatus('failed', { lastError: explainWhatsAppError(err) })
+      scheduleReconnect()
     })
     return {
       status: 'initializing',
@@ -275,6 +470,9 @@ export async function startWhatsapp(phoneNumber?: string): Promise<{ status: str
 }
 
 export async function stopWhatsapp() {
+  // An admin-initiated disconnect is final until they connect again.
+  clearReconnectTimer()
+  reconnectAttempts = 0
   if (wa.client) {
     try {
       await wa.client.destroy()
@@ -319,6 +517,46 @@ let pendingKick = false
 export let lastWorkerRun: Date | null = null
 export let workerProcessed = 0
 export let workerRecovered = 0
+/** Why the worker skipped a cycle, or null when it ran normally. */
+export let workerBlockedReason: string | null = null
+export let workerBlockedAt: Date | null = null
+/** Rate-limits the "queue paused" warning to one line every five minutes. */
+let lastBlockedLog: Date | null = null
+
+/**
+ * Plain-language reason a WhatsApp message cannot be sent yet.
+ *
+ * The queue is intentionally not failed when the channel is down — the message
+ * must survive until the phone is linked — but a silently parked message is
+ * indistinguishable from a broken worker, so the reason is recorded and surfaced.
+ */
+export function deliveryBlockReason(): { ready: boolean; status: string; enabled: boolean; reason: string | null } {
+  const status = wa.status
+  const enabled = whatsappEnabled
+  if (status === 'ready') return { ready: true, status, enabled, reason: null }
+  if (!enabled) {
+    return {
+      ready: false,
+      status,
+      enabled,
+      reason:
+        'WhatsApp is disabled. Set ENABLE_WHATSAPP=true, restart the API, then link the phone by scanning the QR code.',
+    }
+  }
+  const reasons: Record<string, string> = {
+    qr: 'WhatsApp is waiting for the phone to scan the QR code in Settings → WhatsApp.',
+    pairing: 'WhatsApp is waiting for the pairing code to be entered on the phone.',
+    connecting: 'WhatsApp is connecting to the phone.',
+    disconnected: 'The WhatsApp session is disconnected. Re-link the phone if this persists.',
+    disabled: 'The WhatsApp session is disabled.',
+  }
+  return {
+    ready: false,
+    status,
+    enabled,
+    reason: reasons[status] ?? `The WhatsApp session is "${status}". Re-link the phone if this persists.`,
+  }
+}
 
 export async function processMessageQueue(limit = 20): Promise<{ processed: number; sent: number; failed: number }> {
   if (workerRunning) return { processed: 0, sent: 0, failed: 0 }
@@ -330,7 +568,19 @@ export async function processMessageQueue(limit = 20): Promise<{ processed: numb
     await rerouteStrandedSms()
     // Keep messages queued while the phone is offline instead of burning
     // attempts against a session that cannot deliver yet.
-    if (wa.status !== 'ready') return { processed: 0, sent: 0, failed: 0 }
+    const delivery = deliveryBlockReason()
+    if (!delivery.ready) {
+      workerBlockedReason = delivery.reason
+      workerBlockedAt = new Date()
+      const sinceLastLog = lastBlockedLog ? Date.now() - lastBlockedLog.getTime() : Number.POSITIVE_INFINITY
+      if (sinceLastLog > 5 * 60_000) {
+        lastBlockedLog = new Date()
+        logger.warn({ reason: delivery.reason, status: delivery.status, enabled: delivery.enabled }, 'Message queue paused: WhatsApp is not ready')
+      }
+      return { processed: 0, sent: 0, failed: 0 }
+    }
+    workerBlockedReason = null
+    workerBlockedAt = null
     const now = new Date()
     // A worker that crashed after claiming a message would leave it in
     // 'sending' forever. Reclaim expired leases before processing.

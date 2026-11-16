@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+﻿import { useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Bell,
@@ -91,19 +91,54 @@ type NotificationTemplateRow = {
   _id: string
   key: string
   name: string
+  description?: string
+  category?: string
   channel: string
   subject?: string
   body: string
+  placeholders?: string[]
   active: boolean
+  language?: string
+  version?: number
 }
 
 type LetterTemplateRow = {
   _id: string
   name: string
+  nameRw?: string
+  description?: string
+  category?: string
   type: string
   subject: string
   body: string
+  subjectRw?: string
+  bodyRw?: string
+  placeholders?: string[]
   active: boolean
+  version?: number
+}
+
+const TEMPLATE_CATEGORIES: { value: string; label: string }[] = [
+  { value: 'conduct_notifications', label: 'Conduct notifications' },
+  { value: 'incident_notifications', label: 'Incident notifications' },
+  { value: 'parent_engagement', label: 'Parent engagement' },
+  { value: 'student_improvement', label: 'Student improvement' },
+  { value: 'risk_and_support', label: 'Risk and support' },
+  { value: 'investigation', label: 'Investigation' },
+  { value: 'appeals_and_decisions', label: 'Appeals and decisions' },
+  { value: 'official_letters', label: 'Official letters' },
+  { value: 'general_communications', label: 'General communications' },
+]
+
+const COMMON_PLACEHOLDERS = [
+  'studentName', 'studentId', 'className', 'parentName', 'recipientName', 'offenceName',
+  'incidentDate', 'deduction', 'balance', 'riskLevel', 'meetingDate', 'meetingTime', 'venue',
+  'letterType', 'schoolName', 'schoolAddress', 'referenceNumber', 'academicYear', 'term',
+  'signatoryName', 'signatoryTitle', 'title', 'achievement', 'date', 'dueDate', 'reason',
+]
+
+function categoryLabel(value?: string) {
+  return TEMPLATE_CATEGORIES.find((c) => c.value === value)?.label ?? 'Uncategorised'
 }
 
 const LETTER_TYPES = [
@@ -212,7 +247,7 @@ function NotificationsTab() {
         />
 
         {isLoading ? (
-          <LoadingBlock label="Loading notifications…" />
+          <LoadingBlock label="Loading notificationsâ€¦" />
         ) : rows.length ? (
           <>
             <ul className="divide-y divide-line dark:divide-[#1f2f49]">
@@ -225,7 +260,7 @@ function NotificationsTab() {
                     <div>
                       <p className="text-sm font-semibold text-slate-900 dark:text-white">{item.title}</p>
                       <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">{item.message}</p>
-                      <p className="mt-1 text-[11px] text-slate-400">{timeAgo(item.createdAt)} · {titleCase(item.type)}</p>
+                      <p className="mt-1 text-[11px] text-slate-400">{timeAgo(item.createdAt)} Â· {titleCase(item.type)}</p>
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2 pl-12 sm:pl-0">
@@ -305,7 +340,7 @@ function LettersTab() {
   return (
     <div className="space-y-4">
       <Card className="flex flex-wrap items-center gap-2 p-4">
-        <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} placeholder="Search reference, subject or student…" className="sm:w-72" />
+        <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} placeholder="Search reference, subject or studentâ€¦" className="sm:w-72" />
         <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} className="sm:w-48">
           <option value="">All statuses</option>
           <option value="draft">Draft</option>
@@ -324,7 +359,7 @@ function LettersTab() {
       </Card>
 
       {isLoading ? (
-        <LoadingBlock label="Loading letters…" />
+        <LoadingBlock label="Loading lettersâ€¦" />
       ) : letters.length ? (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -346,8 +381,8 @@ function LettersTab() {
                   <tr key={letter._id} className="hover:bg-slate-50/60 dark:hover:bg-white/[0.02]">
                     <td className="px-4 py-3 font-mono text-xs text-slate-500">{letter.reference}</td>
                     <td className="px-4 py-3">
-                      <p className="font-medium">{letter.studentSnapshot?.fullName ?? '—'}</p>
-                      <p className="text-xs text-slate-400">{letter.studentSnapshot?.studentId} · {letter.studentSnapshot?.className}</p>
+                      <p className="font-medium">{letter.studentSnapshot?.fullName ?? 'â€”'}</p>
+                      <p className="text-xs text-slate-400">{letter.studentSnapshot?.studentId} Â· {letter.studentSnapshot?.className}</p>
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{titleCase(letter.type)}</td>
                     <td className="max-w-[240px] truncate px-4 py-3">{letter.subject}</td>
@@ -380,7 +415,7 @@ function LettersTab() {
         open={Boolean(selectedId)}
         onClose={() => setSelectedId(null)}
         title={detail?.subject ?? 'Letter'}
-        subtitle={detail ? `${detail.reference} · ${titleCase(detail.type)}` : undefined}
+        subtitle={detail ? `${detail.reference} Â· ${titleCase(detail.type)}` : undefined}
         size="lg"
         footer={
           detail && (
@@ -416,7 +451,7 @@ function LettersTab() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <p className="text-[11px] uppercase tracking-wider text-slate-400">Student</p>
-                <p className="mt-0.5">{detail.studentSnapshot?.fullName} · {detail.studentSnapshot?.className}</p>
+                <p className="mt-0.5">{detail.studentSnapshot?.fullName} Â· {detail.studentSnapshot?.className}</p>
               </div>
               <div>
                 <p className="text-[11px] uppercase tracking-wider text-slate-400">Prepared by</p>
@@ -428,7 +463,7 @@ function LettersTab() {
               </div>
               <div>
                 <p className="text-[11px] uppercase tracking-wider text-slate-400">Issued</p>
-                <p className="mt-0.5">{detail.issuedAt ? formatDateTime(detail.issuedAt) : '—'}</p>
+                <p className="mt-0.5">{detail.issuedAt ? formatDateTime(detail.issuedAt) : 'â€”'}</p>
               </div>
             </div>
             {detail.rejectionReason && <Alert tone="danger" title="Rejected">{detail.rejectionReason}</Alert>}
@@ -445,7 +480,7 @@ function LettersTab() {
                 <ul className="mt-2 space-y-1.5">
                   {detail.history.map((h, i) => (
                     <li key={i} className="flex items-baseline justify-between gap-3 text-xs">
-                      <span className="text-slate-600 dark:text-slate-300">{titleCase(h.action)}{h.note ? ` — ${h.note}` : ''}</span>
+                      <span className="text-slate-600 dark:text-slate-300">{titleCase(h.action)}{h.note ? ` â€” ${h.note}` : ''}</span>
                       <span className="shrink-0 text-slate-400">{formatDateTime(h.at)}</span>
                     </li>
                   ))}
@@ -531,7 +566,7 @@ function CreateLetterModal({ open, onClose, onCreated }: { open: boolean; onClos
           <Input
             value={form.subject}
             onChange={(e) => setForm({ ...form, subject: e.target.value })}
-            placeholder={template?.subject ? `Template: ${template.subject}` : 'e.g. Official warning — repeated lateness'}
+            placeholder={template?.subject ? `Template: ${template.subject}` : 'e.g. Official warning â€” repeated lateness'}
           />
         </Field>
         <Field
@@ -539,7 +574,7 @@ function CreateLetterModal({ open, onClose, onCreated }: { open: boolean; onClos
           required={!form.templateId}
           hint={form.templateId ? 'Leave blank to use the selected template, or write your own body.' : 'Use {{studentName}}, {{balance}} and other placeholders where helpful.'}
         >
-          <Textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="min-h-[180px]" placeholder="Dear Parent/Guardian, …" />
+          <Textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="min-h-[180px]" placeholder="Dear Parent/Guardian, â€¦" />
         </Field>
         <Alert tone="info">
           Letters are reviewed by a headteacher or deputy before issue. Once approved, a signed PDF becomes available.
@@ -570,7 +605,7 @@ function QueueTab() {
   const process = useMutation({
     mutationFn: () => post<{ processed: number; sent: number; failed: number }>('/notifications/queue/process'),
     onSuccess: (result) => {
-      success(`Queue processed — ${result.sent} sent, ${result.failed} failed of ${result.processed}`)
+      success(`Queue processed â€” ${result.sent} sent, ${result.failed} failed of ${result.processed}`)
       queryClient.invalidateQueries({ queryKey: ['queue'] })
       queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
     },
@@ -590,7 +625,7 @@ function QueueTab() {
   const purge = useMutation({
     mutationFn: () => post<{ purged: number; byChannel: Record<string, number> }>('/notifications/queue/purge-non-whatsapp'),
     onSuccess: (result) => {
-      success(`${result.purged} failed SMS/email message(s) removed — parent messaging is WhatsApp only`)
+      success(`${result.purged} failed SMS/email message(s) removed â€” parent messaging is WhatsApp only`)
       queryClient.invalidateQueries({ queryKey: ['queue'] })
       queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
     },
@@ -599,9 +634,26 @@ function QueueTab() {
 
   const rows = data?.items ?? []
   const s = stats ?? {}
+  const delivery = data?.meta?.delivery as
+    | { ready: boolean; status: string; enabled: boolean; reason: string | null }
+    | undefined
+  const blocked = delivery && !delivery.ready
 
   return (
     <div className="space-y-4">
+      {blocked && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-500/40 dark:bg-amber-500/10">
+          <p className="font-semibold text-amber-900 dark:text-amber-200">
+            Delivery paused — {s.queued ?? 0} message{(s.queued ?? 0) === 1 ? '' : 's'} waiting
+          </p>
+          <p className="mt-1 text-amber-800 dark:text-amber-200/80">{delivery.reason}</p>
+          <p className="mt-1 text-xs text-amber-700 dark:text-amber-300/70">
+            Queued messages keep their place and send automatically once the session is ready. Attempts stay at
+            0/3 because nothing was attempted — this is a channel problem, not a message problem.
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard label="Queued" value={s.queued ?? 0} icon={Mail} tone="brand" />
         <StatCard label="Sent" value={s.sent ?? 0} icon={Send} tone="emerald" />
@@ -630,7 +682,7 @@ function QueueTab() {
       </Card>
 
       {isLoading ? (
-        <LoadingBlock label="Loading message queue…" />
+        <LoadingBlock label="Loading message queueâ€¦" />
       ) : rows.length ? (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -652,12 +704,12 @@ function QueueTab() {
                     <td className="px-4 py-3">
                       <p className="font-medium">{typeof row.parentId === 'object' ? row.parentId?.name ?? row.to : row.to}</p>
                       <p className="text-xs text-slate-400">
-                        {typeof row.studentId === 'object' && row.studentId?.fullName ? `${row.studentId.fullName} · ` : ''}{row.to}
+                        {typeof row.studentId === 'object' && row.studentId?.fullName ? `${row.studentId.fullName} Â· ` : ''}{row.to}
                       </p>
                       {row.lastError && <p className="mt-1 max-w-[260px] text-xs text-red-600 dark:text-red-400">{row.lastError}</p>}
                     </td>
                     <td className="px-4 py-3"><Badge tone="brand">{titleCase(row.channel)}</Badge></td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{row.templateKey ?? '—'}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{row.templateKey ?? 'â€”'}</td>
                     <td className="px-4 py-3"><StatusBadge status={row.status} /></td>
                     <td className="px-4 py-3 text-xs">{row.attempts}/{row.maxAttempts}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{formatDateTime(row.createdAt)}</td>
@@ -694,6 +746,9 @@ function TemplatesTab() {
   const queryClient = useQueryClient()
   const [templateModal, setTemplateModal] = useState<NotificationTemplateRow | 'new' | null>(null)
   const [letterTemplateModal, setLetterTemplateModal] = useState<LetterTemplateRow | 'new' | null>(null)
+  const [category, setCategory] = useState('all')
+  const [language, setLanguage] = useState<'all' | 'en' | 'rw'>('all')
+  const [search, setSearch] = useState('')
 
   const { data: templates, isLoading } = useQuery({
     queryKey: ['notification-templates'],
@@ -707,74 +762,118 @@ function TemplatesTab() {
     enabled: has('letters.view'),
   })
 
+  const matches = (row: { name: string; key?: string; type?: string }) => {
+    if (!search.trim()) return true
+    const needle = search.trim().toLowerCase()
+    return `${row.name} ${row.key ?? ''} ${row.type ?? ''}`.toLowerCase().includes(needle)
+  }
+
+  const notifications = (templates ?? []).filter(
+    (t) => (category === 'all' || t.category === category) && (language === 'all' || t.language === language) && matches(t),
+  )
+  const letters = (letterTemplates ?? []).filter(
+    (t) => (category === 'all' || t.category === category) && matches(t),
+  )
+
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="space-y-4">
       <Card>
-        <CardHeader
-          icon={Bell}
-          title="Notification templates"
-          subtitle="WhatsApp and in-app messages"
-          actions={has('templates.manage') && <Button size="sm" icon={Plus} onClick={() => setTemplateModal('new')}>New</Button>}
-        />
-        {!has('notifications.manage') ? (
-          <EmptyState title="Restricted" message="You need notification management access to view templates." />
-        ) : isLoading ? (
-          <LoadingBlock />
-        ) : templates?.length ? (
-          <ul className="divide-y divide-line dark:divide-[#1f2f49]">
-            {templates.map((t) => (
-              <li key={t._id} className="flex items-start justify-between gap-3 px-4 py-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-[11px] text-slate-400">{t.key}</span>
-                    <Badge tone="brand">{titleCase(t.channel)}</Badge>
-                    {!t.active && <Badge>Inactive</Badge>}
-                  </div>
-                  <p className="mt-1 text-sm font-medium">{t.name}</p>
-                  <p className="mt-0.5 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{t.body}</p>
-                </div>
-                {has('templates.manage') && (
-                  <Button size="sm" variant="ghost" onClick={() => setTemplateModal(t)}>Edit</Button>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <EmptyState icon={Bell} title="No notification templates" message="Create a template so incidents can notify parents automatically." />
-        )}
+        <div className="flex flex-wrap items-end gap-3 p-4">
+          <Field label="Category" className="min-w-[220px] flex-1">
+            <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+              <option value="all">All categories</option>
+              {TEMPLATE_CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </Select>
+          </Field>
+          {has('notifications.manage') && (
+            <Field label="Language" className="min-w-[160px]">
+              <Select value={language} onChange={(e) => setLanguage(e.target.value as 'all' | 'en' | 'rw')}>
+                <option value="all">Both languages</option>
+                <option value="en">English</option>
+                <option value="rw">Ikinyarwanda</option>
+              </Select>
+            </Field>
+          )}
+          <Field label="Search" className="min-w-[200px] flex-1">
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates" />
+          </Field>
+        </div>
       </Card>
 
-      <Card>
-        <CardHeader
-          icon={FileText}
-          title="Letter templates"
-          subtitle="Official letters with merge placeholders"
-          actions={has('templates.manage') && <Button size="sm" icon={Plus} onClick={() => setLetterTemplateModal('new')}>New</Button>}
-        />
-        {!has('letters.view') ? (
-          <EmptyState title="Restricted" message="You need letters access to view letter templates." />
-        ) : letterTemplates?.length ? (
-          <ul className="divide-y divide-line dark:divide-[#1f2f49]">
-            {letterTemplates.map((t) => (
-              <li key={t._id} className="flex items-start justify-between gap-3 px-4 py-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone="ochre">{titleCase(t.type)}</Badge>
-                    {!t.active && <Badge>Inactive</Badge>}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader
+            icon={Bell}
+            title="Notification templates"
+            subtitle={`${notifications.length} of ${templates?.length ?? 0} Â· WhatsApp and in-app`}
+            actions={has('templates.manage') && <Button size="sm" icon={Plus} onClick={() => setTemplateModal('new')}>New</Button>}
+          />
+          {!has('notifications.manage') ? (
+            <EmptyState title="Restricted" message="You need notification management access to view templates." />
+          ) : isLoading ? (
+            <LoadingBlock />
+          ) : notifications.length ? (
+            <ul className="max-h-[560px] divide-y divide-line overflow-y-auto dark:divide-[#1f2f49]">
+              {notifications.map((t) => (
+                <li key={t._id} className="flex items-start justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[11px] text-slate-400">{t.key}</span>
+                      <Badge tone={t.language === 'rw' ? 'ochre' : 'brand'}>
+                        {t.language === 'rw' ? 'IKINYARWANDA' : 'ENGLISH'}
+                      </Badge>
+                      <Badge tone="neutral">{titleCase(t.channel)}</Badge>
+                      {!t.active && <Badge>Inactive</Badge>}
+                    </div>
+                    <p className="mt-1 truncate text-sm font-medium">{t.name}</p>
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{categoryLabel(t.category)}</p>
                   </div>
-                  <p className="mt-1 text-sm font-medium">{t.name}</p>
-                  <p className="mt-0.5 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{t.subject}</p>
-                </div>
-                {has('templates.manage') && (
-                  <Button size="sm" variant="ghost" onClick={() => setLetterTemplateModal(t)}>Edit</Button>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <EmptyState icon={FileText} title="No letter templates" message="Add a warning or invitation template to standardise official letters." />
-        )}
-      </Card>
+                  {has('templates.manage') && (
+                    <Button size="sm" variant="ghost" onClick={() => setTemplateModal(t)}>Edit</Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyState icon={Bell} title="No notification templates" message="Create a template so incidents can notify parents automatically." />
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader
+            icon={FileText}
+            title="Official letter templates"
+            subtitle={`${letters.length} of ${letterTemplates?.length ?? 0} Â· bilingual A4 letters`}
+            actions={has('templates.manage') && <Button size="sm" icon={Plus} onClick={() => setLetterTemplateModal('new')}>New</Button>}
+          />
+          {!has('letters.view') ? (
+            <EmptyState title="Restricted" message="You need letters access to view letter templates." />
+          ) : letters.length ? (
+            <ul className="max-h-[560px] divide-y divide-line overflow-y-auto dark:divide-[#1f2f49]">
+              {letters.map((t) => (
+                <li key={t._id} className="flex items-start justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone="ochre">{titleCase(t.type)}</Badge>
+                      <Badge tone={t.bodyRw ? 'brand' : 'danger'}>{t.bodyRw ? 'EN + RW' : 'ENGLISH ONLY'}</Badge>
+                      {!t.active && <Badge>Inactive</Badge>}
+                    </div>
+                    <p className="mt-1 truncate text-sm font-medium">{t.name}</p>
+                    <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">{t.subject}</p>
+                  </div>
+                  {has('templates.manage') && (
+                    <Button size="sm" variant="ghost" onClick={() => setLetterTemplateModal(t)}>Edit</Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyState icon={FileText} title="No letter templates" message="Add a warning or invitation template to standardise official letters." />
+          )}
+        </Card>
+      </div>
 
       {templateModal !== null && (
         <NotificationTemplateModal
@@ -803,6 +902,94 @@ function TemplatesTab() {
   )
 }
 
+
+const PREVIEW_SAMPLES: Record<string, string> = {
+  studentName: 'Aline Uwase',
+  studentId: 'STU-2026-0142',
+  className: 'Senior Four A',
+  parentName: 'Mr. Jean Bosco Habimana',
+  recipientName: 'Mr. Jean Bosco Habimana',
+  offenceName: 'Late arrival to class',
+  incidentDate: '12 March 2026',
+  deduction: '3',
+  balance: '38',
+  riskLevel: 'high',
+  meetingDate: '20 March 2026',
+  meetingTime: '10:00',
+  venue: 'School Administration Block, Room 2',
+  letterType: 'warning',
+  schoolName: 'ConductNexus Demonstration Secondary School',
+  schoolAddress: 'KG 11 Ave, Kigali, Rwanda',
+  referenceNumber: 'CN/REF/2026/0031',
+  academicYear: '2026-2027',
+  term: 'Term 1',
+  signatoryName: 'Mrs. Claudine Mukamana',
+  signatoryTitle: 'Headteacher',
+  title: 'Most improved learner of the term',
+  achievement: 'Perfect attendance and peer leadership',
+  date: '12 March 2026',
+  dueDate: '25 March 2026',
+  reason: 'Repeated lateness after two warnings',
+}
+
+function previewRender(text: string) {
+  const used = new Set<string>()
+  const rendered = text.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key: string) => {
+    used.add(key)
+    return PREVIEW_SAMPLES[key] ?? `{{${key}}}`
+  })
+  return {
+    rendered,
+    missing: [...used].filter((k) => PREVIEW_SAMPLES[k] === undefined),
+  }
+}
+
+function PlaceholderBar({ onInsert }: { onInsert: (name: string) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1">
+      {COMMON_PLACEHOLDERS.map((p) => (
+        <button
+          key={p}
+          type="button"
+          onClick={() => onInsert(p)}
+          className="rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-slate-600 transition hover:border-brand-500 hover:text-brand-600 dark:border-[#1f2f49] dark:text-slate-300"
+        >
+          {`{{${p}}}`}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function PreviewPanel({ subject, body }: { subject: string; body: string }) {
+  const subjectPreview = previewRender(subject)
+  const bodyPreview = previewRender(body)
+  const missing = [...new Set([...subjectPreview.missing, ...bodyPreview.missing])]
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="label mb-0">Live preview</p>
+        {missing.length ? (
+          <Badge tone="danger">{missing.length} unresolved</Badge>
+        ) : (
+          <Badge tone="success">All placeholders resolved</Badge>
+        )}
+      </div>
+      <div className="rounded-lg border border-line bg-slate-50 p-3 text-xs leading-relaxed dark:border-[#1f2f49] dark:bg-[#0d1728]">
+        {subjectPreview.rendered && (
+          <p className="mb-2 font-semibold text-slate-800 dark:text-slate-100">{subjectPreview.rendered}</p>
+        )}
+        <pre className="whitespace-pre-wrap font-sans text-slate-700 dark:text-slate-300">{bodyPreview.rendered}</pre>
+      </div>
+      {missing.length > 0 && (
+        <p className="text-xs text-red-600 dark:text-red-400">
+          Unresolved: {missing.map((m) => `{{${m}}}`).join(', ')} — this message will be refused at send time.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function NotificationTemplateModal({
   open,
   existing,
@@ -818,17 +1005,36 @@ function NotificationTemplateModal({
   onSuccess: (message: string) => void
   onError: (error: string) => void
 }) {
+  const bodyRef = useRef<HTMLTextAreaElement>(null)
   const [form, setForm] = useState(() =>
     existing
-      ? { key: existing.key, name: existing.name, channel: existing.channel, subject: existing.subject ?? '', body: existing.body, active: existing.active }
-      : { key: '', name: '', channel: 'whatsapp', subject: '', body: '', active: true },
+      ? {
+          key: existing.key,
+          name: existing.name,
+          description: existing.description ?? '',
+          category: existing.category ?? 'general_communications',
+          channel: existing.channel,
+          subject: existing.subject ?? '',
+          body: existing.body,
+          active: existing.active,
+        }
+      : { key: '', name: '', description: '', category: 'general_communications', channel: 'whatsapp', subject: '', body: '', active: true },
   )
+  const language = existing?.language === 'rw' ? 'rw' : 'en'
 
   const save = useMutation({
     mutationFn: () =>
       existing
-        ? patch(`/notifications/templates/${existing._id}`, { name: form.name, channel: form.channel, subject: form.subject, body: form.body, active: form.active })
-        : post('/notifications/templates', form),
+        ? patch(`/notifications/templates/${existing._id}`, {
+            name: form.name,
+            description: form.description,
+            category: form.category,
+            channel: form.channel,
+            subject: form.subject,
+            body: form.body,
+            active: form.active,
+          })
+        : post('/notifications/templates', { ...form, language }),
     onSuccess: () => {
       onSuccess(existing ? 'Template updated' : 'Template created')
       onSaved()
@@ -837,27 +1043,85 @@ function NotificationTemplateModal({
     onError: (err) => onError(apiError(err)),
   })
 
+  const restore = useMutation({
+    mutationFn: () => post(`/notifications/templates/${existing!._id}/restore`, {}),
+    onSuccess: () => {
+      onSuccess('Template restored to the library default')
+      onSaved()
+      onClose()
+    },
+    onError: (err) => onError(apiError(err)),
+  })
+
+  const insertPlaceholder = (name: string) => {
+    const token = `{{${name}}}`
+    const el = bodyRef.current
+    if (!el) {
+      setForm((f) => ({ ...f, body: `${f.body}${token}` }))
+      return
+    }
+    const start = el.selectionStart ?? form.body.length
+    const end = el.selectionEnd ?? form.body.length
+    const next = `${form.body.slice(0, start)}${token}${form.body.slice(end)}`
+    setForm((f) => ({ ...f, body: next }))
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(start + token.length, start + token.length)
+    })
+  }
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={existing ? 'Edit notification template' : 'New notification template'}
-      subtitle="Placeholders like {{studentName}} and {{balance}} are replaced when the message is queued."
-      size="md"
+      subtitle={
+        existing
+          ? `Editing the ${language === 'rw' ? 'Ikinyarwanda' : 'English'} version of ${existing.key}.`
+          : 'Placeholders like {{studentName}} and {{balance}} are replaced when the message is queued.'
+      }
+      size="lg"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button loading={save.isPending} disabled={form.name.trim().length < 2 || form.body.trim().length < 5} onClick={() => save.mutate()}>Save template</Button>
+          {existing && (
+            <Button variant="ghost" loading={restore.isPending} onClick={() => restore.mutate()}>Restore default</Button>
+          )}
+          <Button
+            loading={save.isPending}
+            disabled={form.name.trim().length < 2 || form.body.trim().length < 5 || (!existing && form.key.trim().length < 2)}
+            onClick={() => save.mutate()}
+          >
+            Save template
+          </Button>
         </>
       }
     >
       <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={language === 'rw' ? 'ochre' : 'brand'}>
+            {language === 'rw' ? 'IKINYARWANDA' : 'ENGLISH'}
+          </Badge>
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            {existing ? 'Language is fixed per template version.' : 'This template is created in the language shown.'}
+          </span>
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Template key" required hint="Lowercase letters, numbers, underscores">
-            <Input value={form.key} disabled={Boolean(existing)} onChange={(e) => setForm({ ...form, key: e.target.value })} placeholder="incident_deduction" />
-          </Field>
+          {!existing && (
+            <Field label="Template key" required hint="Lowercase letters, numbers, underscores">
+              <Input value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} placeholder="incident_deduction" />
+            </Field>
+          )}
           <Field label="Display name" required>
             <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </Field>
+          <Field label="Category">
+            <Select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              {TEMPLATE_CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </Select>
           </Field>
           <Field label="Channel">
             <Select value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })}>
@@ -865,17 +1129,36 @@ function NotificationTemplateModal({
               <option value="in_app">In-app</option>
             </Select>
           </Field>
-          <Field label="Active">
-            <div className="flex h-10 items-center">
-              <Toggle checked={form.active} onChange={(v) => setForm({ ...form, active: v })} label="Template active" />
-            </div>
-          </Field>
         </div>
-        <Field label="Subject" hint="Optional for WhatsApp; shown as an email-like heading.">
+
+        <Field label="Description" hint="Shown to administrators in the template library.">
+          <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        </Field>
+
+        <Field label="Subject">
           <Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} />
         </Field>
-        <Field label="Body" required>
-          <Textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="min-h-[160px]" />
+
+        <Field label="Message body" required>
+          <Textarea
+            ref={bodyRef}
+            value={form.body}
+            onChange={(e) => setForm({ ...form, body: e.target.value })}
+            className="min-h-[220px]"
+          />
+        </Field>
+
+        <div className="space-y-1">
+          <p className="label mb-0">Insert placeholder</p>
+          <PlaceholderBar onInsert={insertPlaceholder} />
+        </div>
+
+        <PreviewPanel subject={form.subject} body={form.body} />
+
+        <Field label="Active">
+          <div className="flex h-10 items-center">
+            <Toggle checked={form.active} onChange={(v) => setForm({ ...form, active: v })} label="Template active" />
+          </div>
         </Field>
       </div>
     </Modal>
@@ -897,16 +1180,39 @@ function LetterTemplateModal({
   onSuccess: (message: string) => void
   onError: (error: string) => void
 }) {
+  const bodyRef = useRef<HTMLTextAreaElement>(null)
+  const [lang, setLang] = useState<'en' | 'rw'>(existing?.bodyRw ? 'en' : 'en')
   const [form, setForm] = useState(() =>
     existing
-      ? { name: existing.name, type: existing.type, subject: existing.subject, body: existing.body, active: existing.active }
-      : { name: '', type: 'warning', subject: '', body: '', active: true },
+      ? {
+          name: existing.name,
+          nameRw: existing.nameRw ?? '',
+          description: existing.description ?? '',
+          category: existing.category ?? 'official_letters',
+          type: existing.type,
+          subject: existing.subject,
+          body: existing.body,
+          subjectRw: existing.subjectRw ?? '',
+          bodyRw: existing.bodyRw ?? '',
+          active: existing.active,
+        }
+      : { name: '', nameRw: '', description: '', category: 'official_letters', type: 'warning', subject: '', body: '', subjectRw: '', bodyRw: '', active: true },
   )
 
   const save = useMutation({
     mutationFn: () =>
       existing
-        ? patch(`/letter-templates/${existing._id}`, { name: form.name, subject: form.subject, body: form.body, active: form.active })
+        ? patch(`/letter-templates/${existing._id}`, {
+            name: form.name,
+            nameRw: form.nameRw,
+            description: form.description,
+            category: form.category,
+            subject: form.subject,
+            body: form.body,
+            subjectRw: form.subjectRw,
+            bodyRw: form.bodyRw,
+            active: form.active,
+          })
         : post('/letter-templates', form),
     onSuccess: () => {
       onSuccess(existing ? 'Letter template updated' : 'Letter template created')
@@ -916,36 +1222,122 @@ function LetterTemplateModal({
     onError: (err) => onError(apiError(err)),
   })
 
+  const restore = useMutation({
+    mutationFn: () => post(`/letter-templates/${existing!._id}/restore`, {}),
+    onSuccess: () => {
+      onSuccess('Letter template restored to the library default')
+      onSaved()
+      onClose()
+    },
+    onError: (err) => onError(apiError(err)),
+  })
+
+  const isRw = lang === 'rw'
+  const subjectValue = isRw ? form.subjectRw : form.subject
+  const bodyValue = isRw ? form.bodyRw : form.body
+  const setSubject = (v: string) => setForm((f) => ({ ...f, [isRw ? 'subjectRw' : 'subject']: v }))
+  const setBody = (v: string) => setForm((f) => ({ ...f, [isRw ? 'bodyRw' : 'body']: v }))
+
+  const insertPlaceholder = (name: string) => {
+    const token = `{{${name}}}`
+    const el = bodyRef.current
+    if (!el) {
+      setBody(`${bodyValue}${token}`)
+      return
+    }
+    const start = el.selectionStart ?? bodyValue.length
+    const end = el.selectionEnd ?? bodyValue.length
+    setBody(`${bodyValue.slice(0, start)}${token}${bodyValue.slice(end)}`)
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(start + token.length, start + token.length)
+    })
+  }
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={existing ? 'Edit letter template' : 'New letter template'}
-      subtitle="Use {{studentName}}, {{parentName}}, {{balance}}, {{incidentNumber}} and {{schoolName}}."
+      subtitle="Each letter type holds an English and an Ikinyarwanda version, rendered to A4 PDF."
       size="lg"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button loading={save.isPending} disabled={form.name.trim().length < 3 || form.subject.trim().length < 3 || form.body.trim().length < 10} onClick={() => save.mutate()}>Save template</Button>
+          {existing && (
+            <Button variant="ghost" loading={restore.isPending} onClick={() => restore.mutate()}>Restore default</Button>
+          )}
+          <Button
+            loading={save.isPending}
+            disabled={form.name.trim().length < 3 || !form.subject.trim() || form.body.trim().length < 10}
+            onClick={() => save.mutate()}
+          >
+            Save template
+          </Button>
         </>
       }
     >
       <div className="space-y-3">
+        <Tabs<'en' | 'rw'>
+          active={lang}
+          onChange={setLang}
+          tabs={[
+            { key: 'en', label: 'English' },
+            { key: 'rw', label: 'Ikinyarwanda' },
+          ]}
+        />
+
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Template name" required>
-            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Official warning — repeated lateness" />
+          {!existing && (
+            <Field label="Letter type" required hint="Used to pick the template when issuing a letter">
+              <Select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+                {LETTER_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </Select>
+            </Field>
+          )}
+          <Field label={isRw ? 'Izina (Ikinyarwanda)' : 'Template name'} required>
+            <Input
+              value={isRw ? form.nameRw : form.name}
+              onChange={(e) => setForm((f) => ({ ...f, [isRw ? 'nameRw' : 'name']: e.target.value }))}
+            />
           </Field>
-          <Field label="Letter type">
-            <Select value={form.type} disabled={Boolean(existing)} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-              {LETTER_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          <Field label="Category">
+            <Select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              {TEMPLATE_CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
             </Select>
           </Field>
         </div>
-        <Field label="Subject" required>
-          <Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="Warning regarding repeated lateness" />
+
+        <Field label="Description">
+          <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         </Field>
-        <Field label="Body" required>
-          <Textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="min-h-[220px]" />
+
+        <Field label={isRw ? 'IMPAMVU' : 'Subject'} required>
+          <Input value={subjectValue} onChange={(e) => setSubject(e.target.value)} />
+        </Field>
+
+        <Field label={isRw ? 'Ibyo muyandika (umubiri w’ibaruwa)' : 'Letter body'} required>
+          <Textarea
+            ref={bodyRef}
+            value={bodyValue}
+            onChange={(e) => setBody(e.target.value)}
+            className="min-h-[240px]"
+          />
+        </Field>
+
+        <div className="space-y-1">
+          <p className="label mb-0">Insert placeholder</p>
+          <PlaceholderBar onInsert={insertPlaceholder} />
+        </div>
+
+        <PreviewPanel subject={subjectValue} body={bodyValue} />
+
+        <Field label="Active">
+          <div className="flex h-10 items-center">
+            <Toggle checked={form.active} onChange={(v) => setForm({ ...form, active: v })} label="Letter template active" />
+          </div>
         </Field>
       </div>
     </Modal>
@@ -1002,7 +1394,7 @@ function WhatsappTab() {
     e.preventDefault()
     const digits = pairPhone.replace(/[^\d]/g, '')
     if (!/^\d{8,15}$/.test(digits)) {
-      setPairError('Enter the number with its country code, digits only — for example 2507XXXXXXXX.')
+      setPairError('Enter the number with its country code, digits only â€” for example 2507XXXXXXXX.')
       return
     }
     setPairError('')
@@ -1026,9 +1418,9 @@ function WhatsappTab() {
         </div>
 
         <dl className="mt-4 space-y-2 text-sm">
-          <div className="flex justify-between gap-3"><dt className="text-slate-500">Account</dt><dd>{status?.info?.pushname ?? '—'}</dd></div>
-          <div className="flex justify-between gap-3"><dt className="text-slate-500">Number</dt><dd>{status?.info?.number ?? '—'}</dd></div>
-          <div className="flex justify-between gap-3"><dt className="text-slate-500">Last connected</dt><dd>{status?.lastConnectedAt ? formatDateTime(status.lastConnectedAt) : '—'}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-slate-500">Account</dt><dd>{status?.info?.pushname ?? 'â€”'}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-slate-500">Number</dt><dd>{status?.info?.number ?? 'â€”'}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-slate-500">Last connected</dt><dd>{status?.lastConnectedAt ? formatDateTime(status.lastConnectedAt) : 'â€”'}</dd></div>
         </dl>
 
         {status?.lastError && <div className="mt-3"><Alert tone="danger" title="Last error">{status.lastError}</Alert></div>}
@@ -1036,7 +1428,7 @@ function WhatsappTab() {
         {!status?.enabled && (
           <div className="mt-4">
             <Alert tone="warning" title="WhatsApp is switched off">
-              An administrator must enable WhatsApp in Settings → Communications before the gateway can connect. Parent messaging is WhatsApp only.
+              An administrator must enable WhatsApp in Settings â†’ Communications before the gateway can connect. Parent messaging is WhatsApp only.
             </Alert>
           </div>
         )}
@@ -1054,7 +1446,7 @@ function WhatsappTab() {
       <Card className="p-5">
         <div className="flex items-center gap-2 text-sm font-semibold"><QrCode className="h-4 w-4" /> Link a device</div>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-          Open WhatsApp on the school phone → Linked devices → Link a device, then scan this code. No camera? Use a pairing code. The session is stored on the server.
+          Open WhatsApp on the school phone â†’ Linked devices â†’ Link a device, then scan this code. No camera? Use a pairing code. The session is stored on the server.
         </p>
         <div className="mt-4 flex min-h-[240px] items-center justify-center rounded-xl border border-dashed border-line bg-slate-50 p-4 dark:border-[#2a3b55] dark:bg-white/[0.02]">
           {connected ? (
@@ -1068,7 +1460,7 @@ function WhatsappTab() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Pairing code</p>
               <p className="mt-2 select-all text-4xl font-bold tracking-[0.25em] text-slate-900 dark:text-white">{displayCode}</p>
               <p className="mt-3 max-w-xs text-xs text-slate-500">
-                On the phone: WhatsApp → Linked devices → Link a device → <span className="font-semibold">Link with phone number instead</span>, then enter this code.
+                On the phone: WhatsApp â†’ Linked devices â†’ Link a device â†’ <span className="font-semibold">Link with phone number instead</span>, then enter this code.
               </p>
               <p className="mt-2 text-xs text-slate-400">The code refreshes automatically every few minutes.</p>
             </div>
@@ -1080,7 +1472,7 @@ function WhatsappTab() {
           ) : (
             <div className="text-center text-sm text-slate-500">
               <QrCode className="mx-auto h-10 w-10 text-slate-300" />
-              <p className="mt-2">No QR code yet. Press “Connect device” to start the session.</p>
+              <p className="mt-2">No QR code yet. Press â€œConnect deviceâ€ to start the session.</p>
             </div>
           )}
         </div>
@@ -1089,7 +1481,7 @@ function WhatsappTab() {
           <div className="mt-4 rounded-xl border border-line p-3 dark:border-[#2a3b55]">
             {pairOpen ? (
               <form onSubmit={requestPairingCode} className="space-y-3">
-                <Field label="WhatsApp number (with country code)" hint="Digits only, no + or spaces — for example 250788123456.">
+                <Field label="WhatsApp number (with country code)" hint="Digits only, no + or spaces â€” for example 250788123456.">
                   <Input
                     value={pairPhone}
                     onChange={(e) => setPairPhone(e.target.value)}

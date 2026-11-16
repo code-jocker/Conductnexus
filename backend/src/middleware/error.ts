@@ -4,6 +4,7 @@ import { ApiError } from '../shared/errors.js'
 import { ErrorLog } from '../models/governance.js'
 import { logger } from '../shared/logger.js'
 import { isProd } from '../config/env.js'
+import { captureError } from '../services/monitoring.service.js'
 import { ZodError } from 'zod'
 
 export const globalLimiter = rateLimit({
@@ -82,6 +83,15 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
 
   if (status >= 500) {
     logger.error({ err, requestId: req.requestId }, 'Unhandled request error')
+    captureError({
+      error: err,
+      context: {
+        requestId: req.requestId,
+        method: req.method,
+        path: req.originalUrl,
+        ...(req.auth?.userId ? { userId: String(req.auth.userId) } : {}),
+      },
+    })
     ErrorLog.create({
       level: 'error',
       message: err instanceof Error ? err.message : String(err),

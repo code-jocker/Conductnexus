@@ -1,8 +1,8 @@
 import { useCallback, useState } from 'react'
-import { Alert, Text, View } from 'react-native'
+import { Alert, Platform, Text, View } from 'react-native'
 import { router } from 'expo-router'
 import { apiErrorMessage } from '../src/api/client'
-import { deleteDraft, listDrafts, type LocalDraft } from '../src/offline/db'
+import { deleteDraft, listDrafts, retryDraftAsNew, type LocalDraft } from '../src/offline/db'
 import { syncPendingDrafts, type DraftSyncSummary } from '../src/offline/sync'
 import {
   AppHeader,
@@ -14,6 +14,7 @@ import {
   Row,
   Rows,
   Screen,
+  SectionTitle,
   statusTone,
 } from '../src/components/ui'
 import { formatDateTime } from '../src/utils/format'
@@ -62,6 +63,25 @@ export default function DraftsScreen() {
   }
 
   const pending = drafts.filter((d) => d.syncStatus === 'pending' || d.syncStatus === 'conflict').length
+  const needsDecision = drafts.filter((d) => d.syncStatus === 'conflict' || d.syncStatus === 'rejected')
+
+  const requeueAsNew = (draft: LocalDraft) => {
+    Alert.alert(
+      'Retry as a new report?',
+      'The server refused this draft because its submission id was already used. Retrying creates a new submission with the same details, so the report is recorded once.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Retry as new',
+          onPress: () => {
+            retryDraftAsNew(draft.localId)
+            refresh()
+            setSummary(null)
+          },
+        },
+      ],
+    )
+  }
 
   return (
     <Screen refreshing={syncing} onRefresh={() => void sync()}>
@@ -82,6 +102,38 @@ export default function DraftsScreen() {
       ) : null}
 
       <View style={{ marginTop: spacing.lg }}>
+        {needsDecision.length ? (
+          <>
+            <SectionTitle title="Needs your decision" action={<Badge label={`${needsDecision.length}`} tone="danger" />} />
+            <View style={{ gap: spacing.md }}>
+              {needsDecision.map((draft) => (
+                <Card key={draft.localId}>
+                  <Text style={{ color: theme.text, fontWeight: '800', fontSize: 15 }}>
+                    {draft.studentName} · {draft.offenceName}
+                  </Text>
+                  <Text style={{ color: theme.textMuted, fontSize: 12, marginTop: 3 }}>
+                    {formatDateTime(draft.occurredAt)} · {draft.location || 'No location'}
+                  </Text>
+                  <View style={{ marginTop: spacing.sm }}>
+                    <Badge label={draft.syncStatus} tone={statusTone(draft.syncStatus)} />
+                  </View>
+                  <Text style={{ color: theme.danger, fontSize: 12, marginTop: spacing.sm, lineHeight: 17 }}>
+                    {draft.lastError ?? 'The server did not accept this draft.'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+                    <View style={{ flex: 1 }}>
+                      <Button title="Retry as new" compact icon="refresh" onPress={() => requeueAsNew(draft)} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Button title="Discard" compact variant="danger" onPress={() => confirmDelete(draft)} />
+                    </View>
+                  </View>
+                </Card>
+              ))}
+            </View>
+          </>
+        ) : null}
+
         {drafts.length ? (
           <Rows>
             {drafts.map((draft) => (
@@ -127,8 +179,9 @@ export default function DraftsScreen() {
       </View>
 
       <Text style={{ color: theme.textMuted, fontSize: 11, marginTop: spacing.xl, lineHeight: 16 }}>
-        Drafts are stored only in this app's private sandbox on this device. Signing out does not delete them; remove
-        them here if the device is shared.
+        {Platform.OS === 'web'
+          ? "On web, drafts are stored in this browser's local storage. They may not be available on other browsers or devices."
+          : "Drafts are stored only in this app's private sandbox on this device. Signing out does not delete them; remove them here if the device is shared."}
       </Text>
     </Screen>
   )

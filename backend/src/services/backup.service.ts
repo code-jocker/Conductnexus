@@ -16,27 +16,58 @@ const EXCLUDED = new Set(['sessions', 'errorlogs', 'idempotencykeys', 'synclogs'
 let running = false
 
 export function encryptionKey(): Buffer {
-  if (env.BACKUP_ENCRYPTION_KEY && /^[0-9a-f]{64}$/i.test(env.BACKUP_ENCRYPTION_KEY)) {
-    return Buffer.from(env.BACKUP_ENCRYPTION_KEY, 'hex')
+  const configured = env.BACKUP_ENCRYPTION_KEY.trim()
+  if (configured && /^[0-9a-f]{64}$/i.test(configured)) {
+    return Buffer.from(configured, 'hex')
+  }
+  if (configured) {
+    // Any sufficiently strong passphrase is accepted; stretch it to 32 bytes.
+    return crypto.createHash('sha256').update(configured).digest()
   }
   return crypto.createHash('sha256').update(env.JWT_ACCESS_SECRET).digest()
 }
 
-function encrypt(buffer: Buffer): Buffer {
+/**
+ * Key used by backups written before `BACKUP_ENCRYPTION_KEY` was mandatory.
+ * Only consulted when decryption with the configured key fails, so enabling the
+ * production key does not make earlier backups unreadable.
+ */
+function legacyEncryptionKey(): Buffer {
+  return crypto.createHash('sha256').update(env.JWT_ACCESS_SECRET).digest()
+}
+
+function encryptWith(key: Buffer, buffer: Buffer): Buffer {
   const iv = crypto.randomBytes(12)
-  const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey(), iv)
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
   const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()])
   const tag = cipher.getAuthTag()
   return Buffer.concat([iv, tag, encrypted])
 }
 
-function decrypt(buffer: Buffer): Buffer {
+function decryptWith(key: Buffer, buffer: Buffer): Buffer {
   const iv = buffer.subarray(0, 12)
   const tag = buffer.subarray(12, 28)
   const data = buffer.subarray(28)
-  const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey(), iv)
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)
   decipher.setAuthTag(tag)
   return Buffer.concat([decipher.update(data), decipher.final()])
+}
+
+function encrypt(buffer: Buffer): Buffer {
+  return encryptWith(encryptionKey(), buffer)
+}
+
+function decrypt(buffer: Buffer): Buffer {
+  try {
+    return decryptWith(encryptionKey(), buffer)
+  } catch (err) {
+    const legacy = legacyEncryptionKey()
+    if (legacy.equals(encryptionKey())) throw err
+    // Backups written before BACKUP_ENCRYPTION_KEY existed used the JWT-derived
+    // key; keep them readable rather than failing the restore.
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'backup decrypt failed with the configured key; trying the legacy key')
+    return decryptWith(legacy, buffer)
+  }
 }
 
 export async function ensureBackupDir() {

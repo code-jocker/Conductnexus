@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+﻿import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import request from 'supertest'
 import type { Express } from 'express'
 import mongoose from 'mongoose'
@@ -8,9 +8,18 @@ import { hashPassword } from '../services/auth.service.js'
 import { ensureInitialAllocation } from '../services/ledger.service.js'
 import { seedRbac, seedSchoolDefaults } from '../services/seed.service.js'
 import { Role, Settings, User, UserRole } from '../models/core.js'
-import { AcademicYear, ClassModel, GuardianLink, Parent, Student, Term } from '../models/school.js'
-import { Offence } from '../models/discipline.js'
-import { MessageQueue } from '../models/communications.js'
+import { AcademicYear, ClassModel, Dormitory, GuardianLink, Parent, Student, Term } from '../models/school.js'
+import { Offence, Approval } from '../models/discipline.js'
+import {
+  LetterTemplate,
+  MessageQueue,
+  NotificationTemplate,
+  TemplateVersion,
+} from '../models/communications.js'
+import {
+  LETTER_TEMPLATE_LIBRARY,
+  NOTIFICATION_TEMPLATE_LIBRARY,
+} from '../data/templateLibrary.js'
 import { queueParentMessage } from '../services/communication.service.js'
 
 const PASSWORD = 'TestPass2026'
@@ -141,6 +150,31 @@ describe('role-based access control', () => {
   it('denies a teacher access to system settings changes', async () => {
     const res = await request(app).patch('/api/v1/settings').set(auth('teacher@test.rw')).send({ school: { name: 'Hijacked' } })
     expect(res.status).toBe(403)
+  })
+
+  it('denies an unrelated user the audit timeline of someone else\'s approval', async () => {
+    const requester = await User.findOne({ email: 'teacher@test.rw' }).lean()
+    const approval = await Approval.create({
+      approvalNumber: 'APR-TEST-0001',
+      type: 'adjustment',
+      refId: studentId,
+      studentId,
+      title: 'Confidential conduct adjustment',
+      summary: 'Restricted case detail',
+      requestedBy: requester!._id,
+      status: 'pending',
+      requiredPermission: 'marks.adjust.approve',
+    })
+
+    const denied = await request(app)
+      .get(`/api/v1/approvals/${approval._id}/timeline`)
+      .set(auth('parent@test.rw'))
+    expect(denied.status).toBe(403)
+
+    const allowed = await request(app)
+      .get(`/api/v1/approvals/${approval._id}/timeline`)
+      .set(auth('teacher@test.rw'))
+    expect(allowed.status).toBe(200)
   })
 })
 
@@ -656,6 +690,48 @@ describe('bulk deduct and reward (ledger-critical)', () => {
     }
   })
 
+  it('applies a dormitory-wide reward and records exclusions with reasons', async () => {
+    const dorm = await Dormitory.create({ code: 'BD1', name: 'Bulk Dorm', gender: 'male', capacity: 50 })
+    await Student.updateMany({ _id: { $in: bulkStudents } }, { dormitoryId: dorm._id })
+
+    const preview = await request(app)
+      .post('/api/v1/discipline/bulk/preview')
+      .set(auth('deputy@test.rw'))
+      .send({
+        type: 'reward',
+        scope: 'dormitory',
+        dormitoryId: String(dorm._id),
+        points: 2,
+        reason: 'Dorm preview',
+        excludeStudentIds: [bulkStudents[2]],
+        exclusionReason: 'Already recognised separately',
+      })
+    expect(preview.status).toBe(200)
+    expect(preview.body.data.count).toBe(3)
+    expect(preview.body.data.applicable).toBe(2)
+    const excluded = preview.body.data.lines.find((l: { studentId: string }) => l.studentId === bulkStudents[2])
+    expect(excluded.skipped).toBe(true)
+    expect(excluded.skipReason).toBe('Already recognised separately')
+
+    const res = await request(app)
+      .post('/api/v1/discipline/bulk/apply')
+      .set(auth('deputy@test.rw'))
+      .send({
+        type: 'reward',
+        scope: 'dormitory',
+        dormitoryId: String(dorm._id),
+        points: 2,
+        reason: 'Dorm reward',
+        excludeStudentIds: [bulkStudents[2]],
+        exclusionReason: 'Already recognised separately',
+      })
+    expect(res.status).toBe(201)
+    expect(res.body.data.applied).toBe(2)
+    expect(res.body.data.skipped).toBe(1)
+    expect(res.body.data.exclusions.length).toBe(1)
+    expect(res.body.data.exclusions[0].reason).toBe('Already recognised separately')
+  })
+
   it('keeps the ledger reconcilable after bulk operations', async () => {
     const recon = await request(app)
       .get('/api/v1/discipline/ledger/reconciliation')
@@ -670,6 +746,22 @@ describe('bulk deduct and reward (ledger-critical)', () => {
       .set(auth('teacher@test.rw'))
       .send({ type: 'deduction', scope: 'selection', studentIds: bulkStudents, offenceId, reason: 'Should be denied' })
     expect(res.status).toBe(403)
+  })
+
+  it('restricts school-wide bulk operations to school leadership', async () => {
+    // A deputy holds approval authority but must not reach every student at once.
+    const denied = await request(app)
+      .post('/api/v1/discipline/bulk/preview')
+      .set(auth('deputy@test.rw'))
+      .send({ type: 'reward', scope: 'school', points: 1, reason: 'Whole school reward' })
+    expect(denied.status).toBe(403)
+
+    const allowed = await request(app)
+      .post('/api/v1/discipline/bulk/preview')
+      .set(auth('headteacher@test.rw'))
+      .send({ type: 'reward', scope: 'school', points: 1, reason: 'Whole school reward' })
+    expect(allowed.status).toBe(200)
+    expect(allowed.body.data.count).toBeGreaterThanOrEqual(1)
   })
 })
 
@@ -779,7 +871,7 @@ describe('parent messaging, Kinyarwanda templates and portal link', () => {
 
     const message = await MessageQueue.findOne({ parentId: parent._id }).sort({ createdAt: -1 }).lean()
     expect(message).toBeTruthy()
-    expect(message!.body).toContain('Muraho')
+    expect(message!.body).toContain('Mubyeyi/Murera')
     expect(message!.body).toContain('Parent portal:')
 
     await Settings.findOneAndUpdate(
@@ -788,3 +880,216 @@ describe('parent messaging, Kinyarwanda templates and portal link', () => {
     )
   })
 })
+
+describe('bilingual template library', () => {
+  it('ships 30 template types as 60 language versions', async () => {
+    // 21 notification types Ã— 2 languages, plus 9 official letter types Ã— 2.
+    expect(NOTIFICATION_TEMPLATE_LIBRARY.length).toBe(21)
+    expect(LETTER_TEMPLATE_LIBRARY.length).toBe(9)
+    expect(NOTIFICATION_TEMPLATE_LIBRARY.length + LETTER_TEMPLATE_LIBRARY.length).toBe(30)
+
+    const notificationRows = await NotificationTemplate.countDocuments()
+    expect(notificationRows).toBe(42)
+    const letterRows = await LetterTemplate.countDocuments()
+    expect(letterRows).toBe(9)
+  })
+
+  it('stores a Kinyarwanda version for every notification template', async () => {
+    const rows = await NotificationTemplate.find({}, { key: 1, language: 1 }).lean()
+    const byLanguage = new Map<string, Set<string>>()
+    for (const row of rows) {
+      if (!byLanguage.has(row.language)) byLanguage.set(row.language, new Set())
+      byLanguage.get(row.language)!.add(row.key)
+    }
+
+    for (const tpl of NOTIFICATION_TEMPLATE_LIBRARY) {
+      expect(byLanguage.get('en')?.has(tpl.key), `missing English row for ${tpl.key}`).toBe(true)
+      expect(byLanguage.get('rw')?.has(`${tpl.key}_rw`), `missing Kinyarwanda row for ${tpl.key}`).toBe(true)
+    }
+  })
+
+  it('gives every letter template both languages', async () => {
+    const rows = await LetterTemplate.find().lean()
+    for (const row of rows) {
+      expect(row.bodyRw, `${row.type} is missing a Kinyarwanda body`).toBeTruthy()
+      expect(row.subjectRw, `${row.type} is missing a Kinyarwanda subject`).toBeTruthy()
+      expect(row.originalBodyRw, `${row.type} is missing a stored Kinyarwanda default`).toBeTruthy()
+    }
+  })
+
+  it('classifies every template into a known category', async () => {
+    const notificationCategories = await NotificationTemplate.distinct('category')
+    const letterCategories = await LetterTemplate.distinct('category')
+    const allowed = new Set([
+      'conduct_notifications', 'incident_notifications', 'parent_engagement', 'student_improvement',
+      'risk_and_support', 'investigation', 'appeals_and_decisions', 'official_letters', 'general_communications',
+    ])
+    for (const category of [...notificationCategories, ...letterCategories]) {
+      expect(allowed.has(String(category)), `unknown category ${category}`).toBe(true)
+    }
+  })
+
+  it('never ships an English word inside the Kinyarwanda letter body', async () => {
+    // Placeholders are the only legitimate ASCII-heavy tokens; the prose around
+    // them must be Kinyarwanda.
+    const rwBody = (await LetterTemplate.findOne({ type: 'suspension' }).lean())?.bodyRw ?? ''
+    expect(rwBody).toContain('Mubyeyi/Murera')
+    expect(rwBody).not.toContain('Dear Parent/Guardian')
+    expect(rwBody).toContain('{{studentName}}')
+  })
+})
+
+describe('placeholder safety and template administration', () => {
+  async function consentingParent(name: string, phone: string) {
+    const parent = await Parent.create({ name, phone, whatsappConsent: true })
+    const student = await Student.findOne({ status: 'active' }).lean()
+    if (!student) throw new Error('No active student available')
+    await GuardianLink.create({ studentId: student._id, parentId: parent._id, relationship: 'mother', isPrimary: true })
+    return { parent, student }
+  }
+
+  async function withWhatsapp<T>(fn: () => Promise<T>): Promise<T> {
+    await Settings.findOneAndUpdate(
+      { key: 'system' },
+      { $set: { 'comms.whatsappEnabled': true, 'academic.language': 'rw' } },
+    )
+    try {
+      return await fn()
+    } finally {
+      await Settings.findOneAndUpdate(
+        { key: 'system' },
+        { $set: { 'comms.whatsappEnabled': false, 'academic.language': 'en' } },
+      )
+    }
+  }
+
+  it('refuses to queue a message that still contains an unresolved placeholder', async () => {
+    const { parent, student } = await consentingParent('Placeholder Parent', '0788111222')
+
+    await withWhatsapp(async () => {
+      // positive_behaviour_recognition needs {{achievement}} and {{date}}, which
+      // queueParentMessage cannot supply.
+      await expect(
+        queueParentMessage({ studentId: String(student._id), templateKey: 'positive_behaviour_recognition' }),
+      ).rejects.toThrow(/unresolved placeholders/i)
+    })
+
+    const queued = await MessageQueue.countDocuments({ parentId: parent._id })
+    expect(queued).toBe(0)
+
+    await MessageQueue.deleteMany({ parentId: parent._id })
+    await GuardianLink.deleteMany({ parentId: parent._id })
+    await Parent.deleteOne({ _id: parent._id })
+  })
+
+  it('previews a template and reports placeholders it cannot fill', async () => {
+    const preview = await request(app)
+      .post('/api/v1/notifications/templates/preview')
+      .set(auth('admin@test.rw'))
+      .send({ key: 'incident_deduction', language: 'rw' })
+    expect(preview.status).toBe(200)
+    expect(preview.body.data.valid).toBe(true)
+    expect(preview.body.data.missing).toEqual([])
+    expect(preview.body.data.body).toContain('Mubyeyi/Murera')
+
+    const partial = await request(app)
+      .post('/api/v1/notifications/templates/preview')
+      .set(auth('admin@test.rw'))
+      .send({ key: 'positive_behaviour_recognition', language: 'rw', values: { achievement: 'Perfect attendance' } })
+    expect(partial.status).toBe(200)
+    // Illustrative samples fill every placeholder, so nothing is "missing" —
+    // but the administrator can still see which values need real data.
+    expect(partial.body.data.missing).toEqual([])
+    expect(partial.body.data.unsupplied).toContain('date')
+    expect(partial.body.data.unsupplied).toContain('studentName')
+    expect(partial.body.data.unsupplied).not.toContain('achievement')
+  })
+
+  it('flags a placeholder that no sample can fill', async () => {
+    const created = await request(app)
+      .post('/api/v1/notifications/templates')
+      .set(auth('admin@test.rw'))
+      .send({
+        key: 'probe_custom_template',
+        name: 'Probe custom template',
+        channel: 'whatsapp',
+        body: 'Hello {{studentName}}, your reference is {{totallyUnknownPlaceholder}}.',
+      })
+    expect(created.status).toBe(201)
+
+    const preview = await request(app)
+      .post('/api/v1/notifications/templates/preview')
+      .set(auth('admin@test.rw'))
+      .send({ key: 'probe_custom_template', language: 'en' })
+    expect(preview.status).toBe(200)
+    expect(preview.body.data.missing).toContain('totallyUnknownPlaceholder')
+    expect(preview.body.data.valid).toBe(false)
+  })
+
+  it('restores a template to its library default and keeps a version history', async () => {
+    const template = await NotificationTemplate.findOne({ key: 'incident_deduction_rw' }).lean()
+    if (!template) throw new Error('incident_deduction_rw not seeded')
+
+    const edited = await request(app)
+      .patch(`/api/v1/notifications/templates/${template._id}`)
+      .set(auth('admin@test.rw'))
+      .send({ body: 'Edited body that must be restorable.' })
+    expect(edited.status).toBe(200)
+    expect(edited.body.data.body).toBe('Edited body that must be restorable.')
+    expect(edited.body.data.version).toBe(2)
+
+    const versions = await request(app)
+      .get(`/api/v1/notifications/templates/${template._id}/versions`)
+      .set(auth('admin@test.rw'))
+    expect(versions.status).toBe(200)
+    expect(versions.body.data.length).toBeGreaterThanOrEqual(1)
+    expect(versions.body.data[0].summary).toContain('Updated body')
+
+    const restored = await request(app)
+      .post(`/api/v1/notifications/templates/${template._id}/restore`)
+      .set(auth('admin@test.rw'))
+    expect(restored.status).toBe(200)
+    expect(restored.body.data.body).toBe(template.originalBody)
+
+    await expect(
+      TemplateVersion.countDocuments({ templateType: 'notification', templateId: template._id }),
+    ).resolves.toBeGreaterThanOrEqual(2)
+  })
+
+  it('records every template modification in the audit trail', async () => {
+    const template = await NotificationTemplate.findOne({ key: 'general_communication_rw' }).lean()
+    if (!template) throw new Error('general_communication_rw not seeded')
+
+    const res = await request(app)
+      .patch(`/api/v1/notifications/templates/${template._id}`)
+      .set(auth('admin@test.rw'))
+      .send({ name: 'General school communication (edited)' })
+    expect(res.status).toBe(200)
+
+    const audit = await mongoose.connection.db
+      .collection('auditlogs')
+      .findOne({ action: 'notification_template.updated', resourceId: String(template._id) })
+    expect(audit).toBeTruthy()
+  })
+
+  it('blocks template management without the templates.manage permission', async () => {
+    const template = await NotificationTemplate.findOne({ key: 'incident_deduction', language: 'en' }).lean()
+    const res = await request(app)
+      .patch(`/api/v1/notifications/templates/${template!._id}`)
+      .set(auth('teacher@test.rw'))
+      .send({ body: 'A teacher must not be able to edit official templates.' })
+    expect(res.status).toBe(403)
+  })
+
+  it('duplicates a template as an inactive copy', async () => {
+    const source = await NotificationTemplate.findOne({ key: 'meeting_invitation', language: 'en' }).lean()
+    const res = await request(app)
+      .post(`/api/v1/notifications/templates/${source!._id}/duplicate`)
+      .set(auth('admin@test.rw'))
+      .send({ key: 'meeting_invitation_copy', name: 'Meeting invitation (copy)' })
+    expect(res.status).toBe(201)
+    expect(res.body.data.active).toBe(false)
+    expect(res.body.data.key).toBe('meeting_invitation_copy')
+  })
+})
+

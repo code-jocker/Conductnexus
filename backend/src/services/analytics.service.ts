@@ -9,6 +9,8 @@ import { hasPermission, visibleStudentQuery, type AuthContext } from './rbac.ser
 import { visibleIncidentFilter } from './incidents.service.js'
 import { pendingApprovalsFor } from './approvals.service.js'
 import { queueStatusCounts, whatsappStatus } from './communication.service.js'
+import { isProd } from '../config/env.js'
+import { cached, DASHBOARD_TTL_MS } from './dashboard-cache.js'
 
 const ROLE_LABELS: Record<string, string> = {
   ADMIN: 'Administrator',
@@ -27,7 +29,31 @@ const ROLE_LABELS: Record<string, string> = {
 
 const PRIMARY_ORDER = ['ADMIN', 'HEADTEACHER', 'DEPUTY_DISCIPLINE', 'DOS', 'TEACHER', 'PATRON', 'MATRON', 'SECRETARY', 'IT', 'LIBRARIAN', 'BURSAR', 'PARENT']
 
+/**
+ * Ledger rows are not student documents, so `visibleStudentQuery` cannot be
+ * applied directly. Callers who may see every student get no restriction;
+ * everyone else is limited to the students their role can actually see, which
+ * keeps the ledger trend consistent with the rest of the dashboard.
+ */
+async function ledgerScopeFor(ctx: AuthContext): Promise<Record<string, unknown>> {
+  if (hasPermission(ctx, 'students.view_all') || hasPermission(ctx, 'students.view')) return {}
+  const filter = await visibleStudentQuery(ctx)
+  if (!Object.keys(filter).length) return {}
+  const students = await Student.find(filter).select('_id').limit(10_000).lean()
+  return { studentId: { $in: students.map((s) => s._id) } }
+}
+
 export async function dashboardFor(ctx: AuthContext) {
+  // Cached per user and per role set, production only, for DASHBOARD_TTL_MS.
+  // Development and tests always compute fresh so a change is visible immediately.
+  const cacheKey = `dashboard:${ctx.userId}:${[...ctx.roles].sort().join(',')}`
+  if (isProd) {
+    return cached(cacheKey, DASHBOARD_TTL_MS, () => computeDashboard(ctx))
+  }
+  return computeDashboard(ctx)
+}
+
+async function computeDashboard(ctx: AuthContext) {
   const primaryRole = PRIMARY_ORDER.find((r) => ctx.roles.includes(r)) ?? ctx.roles[0] ?? 'TEACHER'
   const studentFilter = await visibleStudentQuery(ctx)
   const incidentFilter = await visibleIncidentFilter(ctx)
@@ -77,7 +103,7 @@ export async function dashboardFor(ctx: AuthContext) {
       { $sort: { _id: 1 } },
     ]),
     DisciplineLedger.aggregate([
-      { $match: { createdAt: { $gte: since14 } } },
+      { $match: { createdAt: { $gte: since14 }, ...(await ledgerScopeFor(ctx)) } },
       { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Africa/Kigali' } }, deductions: { $sum: { $cond: [{ $lt: ['$change', 0] }, { $abs: '$change' }, 0] } } } },
       { $sort: { _id: 1 } },
     ]),
@@ -86,15 +112,21 @@ export async function dashboardFor(ctx: AuthContext) {
 
   const riskCounts: Record<string, number> = { green: 0, yellow: 0, orange: 0, red: 0 }
   for (const r of riskAgg) riskCounts[r._id as string] = r.count
-  const classAverages = await Promise.all(
-    classList.slice(0, 8).map(async (c) => {
-      const rows = await Student.aggregate([
-        { $match: { ...studentFilter, classId: c._id, status: 'active' } },
-        { $group: { _id: null, avg: { $avg: '$currentBalance' }, count: { $sum: 1 } } },
-      ])
-      return { name: c.name, average: rows[0] ? Math.round(rows[0].avg * 10) / 10 : 0, students: rows[0]?.count ?? 0 }
-    }),
-  )
+
+  // One grouped aggregation instead of one query per class (audit F1).
+  const classAgg = await Student.aggregate([
+    { $match: { ...studentFilter, status: 'active', classId: { $in: classList.map((c) => c._id) } } },
+    { $group: { _id: '$classId', avg: { $avg: '$currentBalance' }, count: { $sum: 1 } } },
+  ])
+  const byClass = new Map(classAgg.map((row) => [String(row._id), row]))
+  const classAverages = classList.slice(0, 8).map((c) => {
+    const row = byClass.get(String(c._id))
+    return {
+      name: c.name,
+      average: row ? Math.round(row.avg * 10) / 10 : 0,
+      students: row?.count ?? 0,
+    }
+  })
 
   const trend: { date: string; incidents: number; deductions: number }[] = []
   for (let i = 13; i >= 0; i--) {

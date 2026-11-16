@@ -11,13 +11,14 @@ import { nextRef } from '../shared/refs.js'
 import type { Request } from 'express'
 
 export type BulkType = 'deduction' | 'reward'
-export type BulkScope = 'class' | 'stream' | 'selection'
+export type BulkScope = 'class' | 'stream' | 'dormitory' | 'school' | 'selection'
 
 export type BulkOperationInput = {
   type: BulkType
   scope: BulkScope
   classId?: string
   streamId?: string
+  dormitoryId?: string
   studentIds?: string[]
   offenceId?: string
   points?: number
@@ -25,6 +26,8 @@ export type BulkOperationInput = {
   title?: string
   termId?: string
   clientReference?: string
+  excludeStudentIds?: string[]
+  exclusionReason?: string
 }
 
 export type BulkPreviewLine = {
@@ -45,15 +48,20 @@ async function resolveStudents(ctx: AuthContext, input: BulkOperationInput) {
   } else if (input.scope === 'stream') {
     if (!input.streamId) throw ApiError.badRequest('Select a stream')
     scopeFilter.streamId = new Types.ObjectId(input.streamId)
-  } else {
+  } else if (input.scope === 'dormitory') {
+    if (!input.dormitoryId) throw ApiError.badRequest('Select a dormitory')
+    scopeFilter.dormitoryId = new Types.ObjectId(input.dormitoryId)
+  } else if (input.scope === 'selection') {
     if (!input.studentIds?.length) throw ApiError.badRequest('Select at least one student')
     scopeFilter._id = { $in: input.studentIds.map((id) => new Types.ObjectId(id)) }
   }
+  // scope 'school' intentionally has no scope filter — every active student the
+  // operator can see is included (subject to RBAC visibility).
 
   const visibility = await visibleStudentQuery(ctx)
   const filter = { status: 'active', ...visibility, ...scopeFilter }
   return Student.find(filter)
-    .select('fullName studentId classId streamId currentBalance currentTermId termId academicYearId status')
+    .select('fullName studentId classId streamId dormitoryId currentBalance currentTermId termId academicYearId status')
     .lean()
 }
 
@@ -74,11 +82,16 @@ export async function previewBulkOperation(ctx: AuthContext, input: BulkOperatio
   const [students, perStudent] = await Promise.all([resolveStudents(ctx, input), resolvePerStudentChange(input)])
   if (!students.length) throw ApiError.badRequest('No active students match this selection')
 
+  const excluded = new Set((input.excludeStudentIds ?? []).map((id) => String(id)))
+  const exclusionReason = input.exclusionReason?.trim() || 'Excluded by operator'
   const lines: BulkPreviewLine[] = students.map((student) => {
     const currentBalance = student.currentBalance
     let skipped = false
     let skipReason: string | undefined
-    if (perStudent.change < 0 && currentBalance <= 0) {
+    if (excluded.has(String(student._id))) {
+      skipped = true
+      skipReason = exclusionReason
+    } else if (perStudent.change < 0 && currentBalance <= 0) {
       skipped = true
       skipReason = 'Balance already at zero — record the case for intervention instead'
     }
@@ -117,12 +130,22 @@ export async function applyBulkOperation(ctx: AuthContext, input: BulkOperationI
   }
 
   const reference = await nextRef('BULK', 5)
+  const excludedIds = new Set((input.excludeStudentIds ?? []).map((id) => String(id)))
+  const exclusions = preview.lines
+    .filter((line) => excludedIds.has(line.studentId))
+    .map((line) => ({
+      studentId: new Types.ObjectId(line.studentId),
+      name: line.name,
+      reason: line.skipReason ?? input.exclusionReason?.trim() ?? 'Excluded by operator',
+    }))
+
   const operation = await BulkOperation.create({
     reference,
     type: input.type,
     scope: input.scope,
     classId: input.classId ? new Types.ObjectId(input.classId) : undefined,
     streamId: input.streamId ? new Types.ObjectId(input.streamId) : undefined,
+    dormitoryId: input.dormitoryId ? new Types.ObjectId(input.dormitoryId) : undefined,
     offenceId: input.offenceId ? new Types.ObjectId(input.offenceId) : undefined,
     points: input.type === 'reward' ? preview.points : undefined,
     reason: input.reason,
@@ -131,6 +154,7 @@ export async function applyBulkOperation(ctx: AuthContext, input: BulkOperationI
     approvedBy: ctx.userId,
     status: 'applying',
     total: preview.count,
+    exclusions,
     results: [],
     clientReference: input.clientReference,
   })

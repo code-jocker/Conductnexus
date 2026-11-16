@@ -1,29 +1,5 @@
 import { Schema, model, Types, type Document } from 'mongoose'
 
-export interface ILetterTemplate extends Document {
-  name: string
-  type: string
-  subject: string
-  body: string
-  active: boolean
-  language: 'en' | 'rw'
-  createdBy?: Types.ObjectId
-}
-
-const letterTemplateSchema = new Schema<ILetterTemplate>(
-  {
-    name: { type: String, required: true },
-    type: { type: String, required: true },
-    subject: { type: String, required: true },
-    body: { type: String, required: true },
-    active: { type: Boolean, default: true },
-    language: { type: String, enum: ['en', 'rw'], default: 'en' },
-    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
-  },
-  { timestamps: true },
-)
-export const LetterTemplate = model<ILetterTemplate>('LetterTemplate', letterTemplateSchema)
-
 export interface ILetter extends Document {
   reference: string
   type:
@@ -50,6 +26,7 @@ export interface ILetter extends Document {
   deliveryStatus: 'not_sent' | 'queued' | 'sent' | 'failed'
   templateId?: Types.ObjectId
   confidentiality: 'standard' | 'restricted'
+  language: 'en' | 'rw'
   studentSnapshot: { fullName: string; studentId: string; className: string }
   history: { at: Date; by?: Types.ObjectId; action: string; note?: string }[]
   createdAt: Date
@@ -81,6 +58,7 @@ const letterSchema = new Schema<ILetter>(
     deliveryStatus: { type: String, enum: ['not_sent', 'queued', 'sent', 'failed'], default: 'not_sent' },
     templateId: { type: Schema.Types.ObjectId, ref: 'LetterTemplate' },
     confidentiality: { type: String, enum: ['standard', 'restricted'], default: 'standard' },
+    language: { type: String, enum: ['en', 'rw'], default: 'en', index: true },
     studentSnapshot: { fullName: String, studentId: String, className: String },
     history: [{ at: { type: Date, default: Date.now }, by: { type: Schema.Types.ObjectId, ref: 'User' }, action: String, note: String }],
   },
@@ -88,28 +66,139 @@ const letterSchema = new Schema<ILetter>(
 )
 export const Letter = model<ILetter>('Letter', letterSchema)
 
+export type TemplateCategory =
+  | 'conduct_notifications'
+  | 'incident_notifications'
+  | 'parent_engagement'
+  | 'student_improvement'
+  | 'risk_and_support'
+  | 'investigation'
+  | 'appeals_and_decisions'
+  | 'official_letters'
+  | 'general_communications'
+
+export const TEMPLATE_CATEGORIES: TemplateCategory[] = [
+  'conduct_notifications',
+  'incident_notifications',
+  'parent_engagement',
+  'student_improvement',
+  'risk_and_support',
+  'investigation',
+  'appeals_and_decisions',
+  'official_letters',
+  'general_communications',
+]
+
+export interface ILetterTemplate extends Document {
+  type: string
+  name: string
+  nameRw: string
+  description: string
+  category: TemplateCategory
+  subject: string
+  body: string
+  subjectRw: string
+  bodyRw: string
+  placeholders: string[]
+  active: boolean
+  originalSubject: string
+  originalBody: string
+  originalSubjectRw: string
+  originalBodyRw: string
+  version: number
+  createdBy?: Types.ObjectId
+  updatedBy?: Types.ObjectId
+}
+
+const letterTemplateSchema = new Schema<ILetterTemplate>(
+  {
+    type: { type: String, required: true, index: true },
+    name: { type: String, required: true },
+    nameRw: { type: String, default: '' },
+    description: { type: String, default: '' },
+    category: { type: String, enum: TEMPLATE_CATEGORIES, default: 'official_letters', index: true },
+    subject: { type: String, default: '' },
+    body: { type: String, default: '' },
+    subjectRw: { type: String, default: '' },
+    bodyRw: { type: String, default: '' },
+    placeholders: { type: [String], default: [] },
+    active: { type: Boolean, default: true },
+    originalSubject: { type: String, default: '' },
+    originalBody: { type: String, default: '' },
+    originalSubjectRw: { type: String, default: '' },
+    originalBodyRw: { type: String, default: '' },
+    version: { type: Number, default: 1 },
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  },
+  { timestamps: true },
+)
+export const LetterTemplate = model<ILetterTemplate>('LetterTemplate', letterTemplateSchema)
+
+export interface ITemplateVersion extends Document {
+  templateType: 'notification' | 'letter'
+  templateId: Types.ObjectId
+  language?: 'en' | 'rw'
+  version: number
+  changedBy: Types.ObjectId
+  changedAt: Date
+  summary: string
+  snapshot: Record<string, unknown>
+}
+
+const templateVersionSchema = new Schema<ITemplateVersion>(
+  {
+    templateType: { type: String, enum: ['notification', 'letter'], required: true, index: true },
+    templateId: { type: Schema.Types.ObjectId, required: true, index: true },
+    language: { type: String, enum: ['en', 'rw'] },
+    version: { type: Number, required: true },
+    changedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    changedAt: { type: Date, default: Date.now },
+    summary: { type: String, default: '' },
+    snapshot: { type: Schema.Types.Mixed, default: {} },
+  },
+  { timestamps: { createdAt: 'changedAt', updatedAt: false } },
+)
+export const TemplateVersion = model<ITemplateVersion>('TemplateVersion', templateVersionSchema)
+
 export interface INotificationTemplate extends Document {
   key: string
   name: string
+  description: string
+  category: TemplateCategory
   channel: 'in_app' | 'whatsapp' | 'sms' | 'email'
   subject: string
   body: string
+  placeholders: string[]
   active: boolean
   language: 'en' | 'rw'
+  /** Untouched library content, used by "restore default". */
+  originalSubject: string
+  originalBody: string
+  version: number
+  updatedBy?: Types.ObjectId
 }
 
 const notificationTemplateSchema = new Schema<INotificationTemplate>(
   {
     key: { type: String, required: true, unique: true },
     name: { type: String, required: true },
+    description: { type: String, default: '' },
+    category: { type: String, enum: TEMPLATE_CATEGORIES, default: 'general_communications', index: true },
     channel: { type: String, enum: ['in_app', 'whatsapp', 'sms', 'email'], default: 'whatsapp' },
     subject: { type: String, default: '' },
     body: { type: String, required: true },
+    placeholders: { type: [String], default: [] },
     active: { type: Boolean, default: true },
     language: { type: String, enum: ['en', 'rw'], default: 'en' },
+    originalSubject: { type: String, default: '' },
+    originalBody: { type: String, default: '' },
+    version: { type: Number, default: 1 },
+    updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true },
 )
+notificationTemplateSchema.index({ category: 1, language: 1 })
 export const NotificationTemplate = model<INotificationTemplate>('NotificationTemplate', notificationTemplateSchema)
 
 export interface INotification extends Document {
@@ -118,6 +207,8 @@ export interface INotification extends Document {
   title: string
   message: string
   link?: string
+  /** Derived from `type` at creation so clients can sort without parsing types. */
+  priority: 'low' | 'normal' | 'high' | 'critical'
   readAt?: Date
   data?: Record<string, unknown>
   createdAt: Date
@@ -130,13 +221,63 @@ const notificationSchema = new Schema<INotification>(
     title: { type: String, required: true },
     message: { type: String, required: true },
     link: { type: String },
+    priority: { type: String, enum: ['low', 'normal', 'high', 'critical'], required: true, default: 'normal' },
     readAt: { type: Date },
     data: { type: Schema.Types.Mixed },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 )
 notificationSchema.index({ userId: 1, readAt: 1, createdAt: -1 })
+notificationSchema.index({ userId: 1, priority: 1, createdAt: -1 })
 export const Notification = model<INotification>('Notification', notificationSchema)
+
+/** Notification categories a user can mute per channel. */
+export const NOTIFICATION_CATEGORIES = [
+  'incident',
+  'approval',
+  'safeguarding',
+  'letter',
+  'meeting',
+  'risk',
+  'appeal',
+  'communication',
+  'system',
+] as const
+
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number]
+
+export const NOTIFICATION_CHANNELS = ['push', 'email', 'sms', 'whatsapp'] as const
+export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number]
+
+export interface INotificationPreference extends Document {
+  userId: Types.ObjectId
+  channel: NotificationChannel
+  category: NotificationCategory
+  enabled: boolean
+  updatedAt: Date
+}
+
+/**
+ * Per-user, per-channel delivery preferences.
+ *
+ * The in-app inbox is never suppressed by these rows — a muted channel only
+ * stops that channel from being pushed. Absence of a row means "enabled", so a
+ * new category or channel is opt-out by default rather than silently off.
+ */
+const notificationPreferenceSchema = new Schema<INotificationPreference>(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    channel: { type: String, enum: NOTIFICATION_CHANNELS, required: true },
+    category: { type: String, enum: NOTIFICATION_CATEGORIES, required: true },
+    enabled: { type: Boolean, required: true, default: true },
+  },
+  { timestamps: { createdAt: true, updatedAt: true } },
+)
+notificationPreferenceSchema.index({ userId: 1, channel: 1, category: 1 }, { unique: true })
+export const NotificationPreference = model<INotificationPreference>(
+  'NotificationPreference',
+  notificationPreferenceSchema,
+)
 
 export interface IMessageQueue extends Document {
   channel: 'whatsapp' | 'sms' | 'email'

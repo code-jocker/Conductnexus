@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Typecheck, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      # Mirrors backend/src/test/env.setup.ts so the suite never touches a real
+      # database or any external provider.
+      NODE_ENV: test
+      TEST_MONGODB_URI: mongodb://127.0.0.1:27017/conductnexus_ci
+      JWT_ACCESS_SECRET: ci-only-secret-value-0123456789abcdef
+      ENABLE_WHATSAPP: 'false'
+      SMTP_HOST: ''
+      ADMIN_EMAIL: ''
+      ADMIN_PASSWORD: ''
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            frontend/package-lock.json
+            mobile/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix backend
+          npm ci --prefix frontend
+          npm ci --prefix mobile
+
+      - name: Typecheck (backend, web, mobile)
+        run: npm run typecheck
+
+      - name: Backend tests
+        run: npm test
+
+      - name: Build web console
+        run: npm --prefix frontend run build

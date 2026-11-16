@@ -88,7 +88,8 @@ export function apiErrorMessage(error: unknown): string {
     const envelope = error.response?.data as ApiEnvelope<unknown> | undefined
     if (envelope?.error?.message) return envelope.error.message
     if (error.code === 'ECONNABORTED') return 'The request timed out. Check your connection and try again.'
-    if (!error.response) return 'You appear to be offline. Check your connection and try again.'
+    if (!error.response)
+      return `Cannot reach the server (${baseURL}). If you are on a phone/emulator, set EXPO_PUBLIC_API_URL in mobile/.env to your computer’s LAN IP or deployed API URL, then restart Expo.`
   }
   if (error instanceof Error && error.message) return error.message
   return 'Something went wrong. Please try again.'

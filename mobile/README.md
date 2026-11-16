@@ -57,7 +57,7 @@ The mobile app obtains a Google ID token with `expo-auth-session` and exchanges 
 
 ## Offline behaviour
 
-Drafts are stored in SQLite (`conductnexus.db`, table `incident_drafts`) with a unique client submission id. Sync occurs when you submit, pull-to-refresh the drafts screen, or tap Sync. The backend deduplicates by `clientSubmissionId`, so a retry never creates a second incident. Safeguarding flags travel with the draft.
+Drafts are stored in SQLite (`conductnexus.db`, table `incident_drafts`) on native devices. On web, `expo-sqlite` sync APIs are not available without cross-origin isolation, so the app stores drafts in browser local storage instead to avoid runtime crashes. Sync occurs when you submit, pull-to-refresh the drafts screen, or tap Sync. The backend deduplicates by `clientSubmissionId`, so a retry never creates a second incident. Safeguarding flags travel with the draft.
 
 ## Build and release
 

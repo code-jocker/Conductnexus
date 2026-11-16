@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import { forwardRef, useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { ChevronLeft, ChevronRight, Loader2, Search, X, type LucideIcon } from 'lucide-react'
 import { cn, statusTone, titleCase } from '../lib/utils'
 
@@ -77,9 +77,11 @@ export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputEleme
   return <input className={cn('input', className)} {...rest} />
 }
 
-export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cn('textarea', className)} {...rest} />
-}
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function Textarea({ className, ...rest }, ref) {
+    return <textarea ref={ref} className={cn('textarea', className)} {...rest} />
+  },
+)
 
 export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (

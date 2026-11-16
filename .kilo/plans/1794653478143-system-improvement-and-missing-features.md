@@ -1,6 +1,60 @@
-# ConductNexus — Master Implementation Plan (Combined Scope)
+# ConductNexus — Mobile web crash fix plan: `SharedArrayBuffer is not defined` (expo-sqlite)
 
-> Consolidated from all user prompts in this session and grounded in the current codebase. Full, implementation-oriented scope is captured in `prompt.md` (repo root). This plan defines phased, file-level execution while preserving existing architecture, data, auth, RBAC/API compatibility, and ledger integrity.
+> Scope of this plan: resolve the reported Expo/React Native Web runtime crash. The broader combined product plan remains in `prompt.md` (repo root).
+
+## 1. Root cause (from current code)
+
+- `mobile/src/offline/db.ts:1-3` does `import * as SQLite from 'expo-sqlite'` and **top-level** `const db = SQLite.openDatabaseSync('conductnexus.db')`. On web, `expo-sqlite`'s sync API (`web/WorkerChannel.ts`) uses `SharedArrayBuffer` (and requires cross-origin isolation / `SharedArrayBuffer` availability); in the current web environment it throws `SharedArrayBuffer is not defined` during module evaluation.
+- `mobile/app/drafts.tsx:5` imports `deleteDraft, listDrafts, retryDraftAsNew` from `../src/offline/db` and `mobile/src/offline/sync.ts:3` imports draft DB helpers → importing the drafts route (and anything pulling sync/db) eagerly evaluates `db.ts` and crashes web.
+- Native (Android/iOS) relies on this SQLite draft store and idempotent sync (`mobile/README.md:59-61`, `sync.ts` uses `clientSubmissionId`); behavior must be preserved on native.
+
+## 2. Recommended fix (implementation-ready)
+
+**Goal:** eliminate top-level sync-SQLite initialization on web and make offline-draft storage platform-safe, while keeping native draft/sync behavior intact.
+
+### 2.1 Refactor offline storage into a platform-safe module boundary
+- **Split or lazy-init `db`:**
+  - Create `mobile/src/offline/db.native.ts` containing the current `expo-sqlite` `openDatabaseSync` implementation (move logic from `db.ts`; keep table schema, indexes, `LocalDraft`/`DraftStatus` types/exports, and all functions/semantics identical).
+  - Create `mobile/src/offline/db.web.ts` providing the **same exported API/types** (`LocalDraft`, `DraftStatus`, `listDrafts`, `countPendingDrafts`, `saveDraft`, `deleteDraft`, `markDraftSynced`, `markDraftFailed`, `retryDraftAsNew`, `discardDraft`) implemented **without** `expo-sqlite`/`SharedArrayBuffer`.
+  - Replace `mobile/src/offline/db.ts` with either a thin re-export shim compatible with Metro resolution or shared types + platform-resolved implementation (ensure `drafts.tsx` and `sync.ts` continue importing from the same path, e.g. `../src/offline/db`).
+- **Web storage choice (recommended for this fix):** use `localStorage` (or an in-memory fallback if unavailable) namespaced (e.g. `conductnexus:drafts:v1`) as a simple key/value store of draft records. Rationale: avoids `SharedArrayBuffer`/COOP-COEP requirements, needs no WASM worker, and preserves draft persistence across reloads on web where possible. Keep semantics aligned (status transitions, `clientSubmissionId` stability, retry-as-new generates fresh submission id, ordering by `updatedAt`).
+  - *Alternative (acceptable if product chooses):* web implementation can be a no-op/unavailable store that never throws at import and surfaces a clear "Offline drafts are not available on web" state; this unblocks web but removes web draft persistence. **Recommended default:** `localStorage` persistence so web parity is best-effort and no crash occurs.
+
+### 2.2 Keep sync and UI behavior correct
+- `mobile/src/offline/sync.ts`: no logic changes required if `db` contract is preserved; ensure it does not import SQLite directly and only uses the platform-resolved module. Confirm chunking/idempotency (`clientSubmissionId`, `syncDrafts` API) unchanged.
+- `mobile/app/drafts.tsx`: keep existing UX (list/sync/conflict handling). Add a small, non-breaking web notice only if web storage is limited/unavailable (e.g. inform that drafts are stored in browser storage on web vs device sandbox on native) — do not block native flows. Guard any direct assumptions that storage is device-sandbox-only in copy if shown on web.
+- Audit other importers of `../src/offline/db` or `expo-sqlite` in `mobile/` (e.g. incident/report screens, hooks) and route them through the same safe module so no route can trigger top-level SQLite on web.
+
+### 2.3 Verify Expo web config assumptions
+- `mobile/app.json` includes `"expo-sqlite"` in plugins and `web.bundler: "metro"`; no source changes expected there for this fix. Do **not** rely on enabling cross-origin isolation headers in Expo dev web as the primary fix (fragile/environment-dependent); prefer the platform-safe module approach above.
+
+## 3. Affected files (expected)
+
+- **Modify:** `mobile/src/offline/db.ts` (becomes shim/shared entry) — preserve public API.
+- **Add:** `mobile/src/offline/db.native.ts`, `mobile/src/offline/db.web.ts` (and optional `db.types.ts` if helpful for type sharing).
+- **Possibly modify (only if needed):** `mobile/app/drafts.tsx` (web-safe copy/guards), `mobile/src/offline/sync.ts` (import path unchanged; only if typing/exports require), any other `mobile/**` files importing offline db directly.
+- **Docs (optional but recommended):** `mobile/README.md` note that web uses browser storage / has limited offline-draft support compared to native SQLite.
+
+## 4. Validation
+
+- **Web:** `cd mobile && npm run web` (or `expo start --web`) loads without `SharedArrayBuffer is not defined`; navigate to drafts route — renders, can list/create/delete/sync states per web implementation (or shows graceful unavailable state if chosen).
+- **Native (regression):** `npm run android` / `npm run ios` (or dev build) — drafts persist in SQLite, sync/conflict/retry-as-new/discard behave as before, `clientSubmissionId` idempotency preserved.
+- **Types:** `cd mobile && npm run typecheck` passes.
+- **Search guard:** confirm no remaining top-level `openDatabaseSync` in modules evaluated on web import paths (`mobile/src/offline/db.ts` must not execute sync open on web).
+
+## 5. Risks and notes
+
+- Web `localStorage` has quota/serialization limits and is per-origin/browser-profile (acceptable for draft text payloads; large evidence attachments remain out of scope of this store). Native remains the source of robust offline storage.
+- Preserve exact draft record fields/status semantics to avoid breaking server sync contract.
+- If any screen assumes synchronous availability in a way that conflicts with an async web backend later, keep the exported API synchronous-compatible as today (the `localStorage` approach is synchronous).
+
+## 6. Implementation order
+
+1. Extract current implementation to `db.native.ts` and define shared types/contract.
+2. Implement `db.web.ts` (recommended: `localStorage`-backed, same API) with safe guards for missing storage.
+3. Wire `db.ts` platform resolution/re-export; update any direct importers.
+4. Adjust drafts UI copy/guards only if required for web.
+5. Run `npm run typecheck` in `mobile/` and manual web/native smoke checks above.
 
 ## 0. Baseline and invariants (must hold throughout)
 

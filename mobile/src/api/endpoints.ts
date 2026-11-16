@@ -210,6 +210,27 @@ export async function syncDrafts(drafts: SyncDraft[]): Promise<{ results: SyncRe
   return unwrap(api.post('/sync/incidents', { drafts }))
 }
 
+// ── Reports (read-only) ────────────────────────────────────────────────────
+
+export type ReportKind =
+  | 'term'
+  | 'year-end'
+  | 'high-risk'
+  | 'class'
+  | 'teacher-activity'
+  | 'communication'
+
+export type ReportPayload = Record<string, unknown>
+
+/**
+ * Read-only report fetch. The backend gates each kind on `reports.view`
+ * (`routes/reports.routes.ts`); the mobile client never exports and never
+ * mutates report data.
+ */
+export async function fetchReport(kind: ReportKind): Promise<ReportPayload> {
+  return unwrap(api.get<ApiEnvelope<ReportPayload>>(`/reports/${kind}`))
+}
+
 // ── Approvals ──────────────────────────────────────────────────────────────
 
 export async function listApprovals(status = 'pending'): Promise<{ items: Approval[]; pendingCount: number }> {

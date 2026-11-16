@@ -480,9 +480,10 @@ router.post(
 
 const bulkBody = z.object({
   type: z.enum(['deduction', 'reward']),
-  scope: z.enum(['class', 'stream', 'selection']),
+  scope: z.enum(['class', 'stream', 'dormitory', 'school', 'selection']),
   classId: objectId.optional(),
   streamId: objectId.optional(),
+  dormitoryId: objectId.optional(),
   studentIds: z.array(objectId).max(500).optional(),
   offenceId: objectId.optional(),
   points: z.number().int().min(1).max(20).optional(),
@@ -490,19 +491,31 @@ const bulkBody = z.object({
   title: z.string().trim().max(160).optional(),
   termId: objectId.optional(),
   clientReference: z.string().trim().max(80).optional(),
+  excludeStudentIds: z.array(objectId).max(500).optional(),
+  exclusionReason: z.string().trim().max(400).optional(),
 })
 
-// Bulk deduct/reward for a whole class, stream, or an explicit selection.
-// Deductions are never applied on report: this is an explicit, authorized,
-// per-student audited action. Deductions additionally require approval
-// authority (DEPUTY_DISCIPLINE / Headteacher) so the approver cannot be a
-// teacher who only records incidents (separation of duties).
+// Bulk deduct/reward for a whole class, stream, dormitory, the entire school, or
+// an explicit selection. Deductions are never applied on report: this is an
+// explicit, authorized, per-student audited action. Deductions additionally
+// require approval authority (DEPUTY_DISCIPLINE / Headteacher) so the approver
+// cannot be a teacher who only records incidents (separation of duties).
+
+// A school-wide operation reaches every active student in the school, so it is
+// restricted to school leadership regardless of granted permissions.
+function requireSchoolWideAuthority(scope: string, roles: string[]) {
+  if (scope !== 'school') return
+  if (!roles.includes('HEADTEACHER') && !roles.includes('ADMIN')) {
+    throw ApiError.forbidden('School-wide bulk operations require Headteacher or Administrator authority.')
+  }
+}
 
 router.post(
   '/discipline/bulk/preview',
   requirePermission('marks.view'),
   validate({ body: bulkBody }),
   asyncHandler(async (req, res) => {
+    requireSchoolWideAuthority(req.body.scope as string, req.auth!.roles)
     ok(res, await previewBulkOperation(req.auth!, req.body as never))
   }),
 )
@@ -512,7 +525,8 @@ router.post(
   idempotency('discipline.bulk'),
   validate({ body: bulkBody }),
   asyncHandler(async (req, res) => {
-    const { type } = req.body
+    const { type, scope } = req.body
+    requireSchoolWideAuthority(scope as string, req.auth!.roles)
     if (type === 'deduction') {
       if (!req.auth!.permissions.has('marks.deduct') || !req.auth!.permissions.has('marks.adjust.approve')) {
         throw ApiError.forbidden('Bulk deductions require both mark deduction and approval authority.')

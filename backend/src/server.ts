@@ -8,11 +8,18 @@ import { logger } from './shared/logger.js'
 import { verifyAccessToken } from './services/auth.service.js'
 import { assertSessionActive } from './services/session.service.js'
 import { setSocketServer, feedRoom } from './services/notification.service.js'
-import { refreshCommsSettings, processMessageQueue, startWhatsapp, stopWhatsapp } from './services/communication.service.js'
+import {
+  processMessageQueue,
+  refreshCommsSettings,
+  startWhatsapp,
+  stopWhatsapp,
+} from './services/communication.service.js'
 import { startBackupSchedule } from './services/backup.service.js'
 import { ensureBackupDir } from './services/backup.service.js'
+import { captureError, initMonitoring } from './services/monitoring.service.js'
 
 async function main() {
+  const reporter = initMonitoring()
   await connectDatabase()
   await ensureBackupDir()
   await refreshCommsSettings()
@@ -74,7 +81,7 @@ async function main() {
 
   server.listen(env.PORT, () => {
     logger.info(
-      { port: env.PORT, env: env.NODE_ENV, docs: `http://localhost:${env.PORT}/api/docs` },
+      { port: env.PORT, env: env.NODE_ENV, docs: `http://localhost:${env.PORT}/api/docs`, errorReporter: reporter.name },
       'ConductNexus API listening',
     )
   })
@@ -85,6 +92,10 @@ async function main() {
     shuttingDown = true
     logger.info({ signal }, 'Shutting down')
     clearInterval(workerInterval)
+    // Destroy the WhatsApp browser before the process exits. Abrupt kills leave
+    // the profile directory locked, so the next start cannot restore the saved
+    // link and falls back to asking for a QR scan.
+    await stopWhatsapp().catch((err) => logger.warn({ err }, 'WhatsApp shutdown failed'))
     setTimeout(() => process.exit(1), 15_000).unref()
     try {
       await stopWhatsapp().catch(() => undefined)
@@ -100,9 +111,13 @@ async function main() {
 
   process.on('SIGINT', () => void shutdown('SIGINT'))
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
-  process.on('unhandledRejection', (reason) => logger.error({ reason }, 'Unhandled promise rejection'))
+  process.on('unhandledRejection', (reason) => {
+    logger.error({ reason }, 'Unhandled promise rejection')
+    captureError({ error: reason instanceof Error ? reason : new Error(String(reason)) })
+  })
   process.on('uncaughtException', (err) => {
     logger.fatal({ err }, 'Uncaught exception')
+    captureError({ error: err, level: 'fatal' })
     void shutdown('uncaughtException')
   })
 }

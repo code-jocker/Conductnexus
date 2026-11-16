@@ -28,6 +28,8 @@ services:
         value: "14"
       - key: FIREBASE_PROJECT_ID
         value: e-visitors-d4830
+      - key: BACKUP_ENCRYPTION_KEY
+        generateValue: true
       - key: BACKUP_SCHEDULE
         value: "0 2 * * *"
       - key: BACKUP_RETENTION_DAYS

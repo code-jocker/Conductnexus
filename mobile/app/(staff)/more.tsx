@@ -112,8 +112,16 @@ export default function MoreScreen() {
         ) : null}
         <Row
           icon="document-text-outline"
-          title="Reports & exports"
-          subtitle="Full reporting is available in the web console"
+          title="Reports"
+          subtitle={
+            has('reports.view')
+              ? 'Read-only term, year-end, risk and class summaries'
+              : 'Your role does not include reporting access'
+          }
+          onPress={has('reports.view') ? () => router.push('/reports') : undefined}
+          right={
+            has('reports.view') ? undefined : <Badge label="restricted" tone="neutral" />
+          }
         />
       </Rows>
 

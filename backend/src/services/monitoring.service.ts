@@ -7,7 +7,99 @@ import { getSettings } from '../models/core.js'
 import { Approval, DisciplineLedger, Incident } from '../models/discipline.js'
 import { BackupRecord, ErrorLog } from '../models/governance.js'
 import { MessageQueue, WhatsappSession } from '../models/communications.js'
-import { lastWorkerRun, queueStatusCounts, whatsappStatus, workerProcessed } from './communication.service.js'
+import {
+  deliveryBlockReason,
+  lastWorkerRun,
+  queueStatusCounts,
+  whatsappStatus,
+  workerBlockedReason,
+  workerProcessed,
+} from './communication.service.js'
+import { logger } from '../shared/logger.js'
+
+/* ── Error reporting seam ─────────────────────────────────────────────────────
+ *
+ * There is deliberately no bundled third-party SDK: the service exposes a
+ * provider-agnostic `ErrorReporter` interface, a working default (structured
+ * error log), and a registry so a deployment can attach its own provider without
+ * touching call sites. Nothing here pretends a provider is configured when it is
+ * not — an unknown provider name fails at boot instead of silently reporting
+ * nowhere.
+ */
+
+export type ErrorContext = {
+  requestId?: string
+  method?: string
+  path?: string
+  userId?: string
+  /** Free-form tags a provider can forward (never secrets). */
+  tags?: Record<string, string>
+}
+
+export type ErrorCapture = {
+  error: unknown
+  context?: ErrorContext
+  level?: 'error' | 'fatal'
+}
+
+export interface ErrorReporter {
+  readonly name: string
+  capture(input: ErrorCapture): void | Promise<void>
+}
+
+/** Default reporter: one structured log line per captured error. */
+export class LoggingReporter implements ErrorReporter {
+  readonly name = 'log'
+
+  capture({ error, context, level = 'error' }: ErrorCapture): void {
+    const err = error instanceof Error ? error : new Error(String(error))
+    const fields = { err: { name: err.name, message: err.message, stack: err.stack }, ...(context ?? {}) }
+    if (level === 'fatal') logger.fatal(fields, 'Captured fatal error')
+    else logger.error(fields, 'Captured error')
+  }
+}
+
+let reporter: ErrorReporter = new LoggingReporter()
+
+export function setReporter(next: ErrorReporter): void {
+  reporter = next
+}
+
+export function getReporter(): ErrorReporter {
+  return reporter
+}
+
+/** Forwards an error to the configured reporter. Never throws. */
+export function captureError(input: ErrorCapture): void {
+  try {
+    void reporter.capture(input)
+  } catch (err) {
+    logger.error({ err }, 'Error reporter threw while capturing an error')
+  }
+}
+
+/**
+ * Resolves the provider named by `ERROR_REPORTING_PROVIDER`.
+ *
+ * Only `log` ships with the service. Any other value is a deployment error
+ * rather than a silent no-op, so a typo cannot look like "monitoring is on".
+ */
+export function resolveReporter(provider: string | undefined): ErrorReporter {
+  const name = (provider ?? 'log').trim().toLowerCase()
+  if (!name || name === 'log') return new LoggingReporter()
+  throw new Error(
+    `Unknown ERROR_REPORTING_PROVIDER "${name}". The service ships only the "log" reporter; ` +
+      'register a custom ErrorReporter with setReporter() before naming another provider.',
+  )
+}
+
+export function initMonitoring(): ErrorReporter {
+  const resolved = resolveReporter(env.ERROR_REPORTING_PROVIDER)
+  setReporter(resolved)
+  return resolved
+}
+
+/* ── Operational health ─────────────────────────────────────────────────── */
 
 function dirSize(dir: string): Promise<number> {
   return new Promise((resolve) => {
@@ -81,6 +173,8 @@ export async function systemSnapshot() {
       counts: queueCounts,
       deadLetters,
       total: Object.values(queueCounts).reduce((s, n) => s + n, 0),
+      delivery: deliveryBlockReason(),
+      worker: { lastRun: lastWorkerRun, processed: workerProcessed, blockedReason: workerBlockedReason },
     },
     whatsapp: wa,
     backups: {
