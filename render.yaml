@@ -5,7 +5,8 @@ services:
     plan: free
     region: frankfurt
     rootDir: backend
-    buildCommand: npm ci && npm run build
+    # NODE_ENV=production makes npm ci omit devDependencies, and tsc lives there.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /api/v1/health
     autoDeploy: true
