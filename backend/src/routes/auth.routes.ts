@@ -33,6 +33,8 @@ import {
 import { getSettings, User as UserModel } from '../models/core.js'
 import { emailConfigured, firebaseConfigured } from '../config/env.js'
 import { invalidateUserAccess } from '../services/rbac.service.js'
+import { requestableRoles } from '../shared/roles.js'
+import { submitAccessRequest } from '../services/access-request.service.js'
 import { listUserSessions, registerPushToken, removePushToken, revokeSession } from '../services/session.service.js'
 import { actorOf, passwordField } from './helpers.js'
 
@@ -126,6 +128,43 @@ router.get(
       startingMarks: settings.academic.startingMarks,
       timezone: settings.academic.timezone,
       language: settings.academic.language,
+    })
+  }),
+)
+
+router.get(
+  '/access-request/roles',
+  asyncHandler(async (_req, res) => {
+    ok(res, requestableRoles())
+  }),
+)
+
+router.post(
+  '/access-request',
+  authLimiter,
+  validate({
+    body: z.object({
+      name: z.string().trim().min(2).max(120),
+      email: z.string().trim().email(),
+      phone: z.string().trim().max(30).optional().or(z.literal('')),
+      requestedRole: z.string().trim().min(2).max(60),
+      reason: z.string().trim().max(1000).optional().or(z.literal('')),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    await submitAccessRequest({
+      name: req.body.name,
+      email: req.body.email,
+      phone: req.body.phone || undefined,
+      requestedRole: req.body.requestedRole,
+      reason: req.body.reason || undefined,
+    })
+    res.status(202).json({
+      success: true,
+      data: {
+        message:
+          'Your request was received. The school office will review it and contact you by email and WhatsApp once it is approved.',
+      },
     })
   }),
 )

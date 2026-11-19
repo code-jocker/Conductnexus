@@ -1,6 +1,20 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Plus, Search, ShieldCheck, Trash2, UserCog, UserPlus, Users as UsersIcon } from 'lucide-react'
+import {
+  CheckCircle2,
+  Inbox,
+  KeyRound,
+  Mail,
+  MessageCircle,
+  Plus,
+  Search,
+  ShieldCheck,
+  Trash2,
+  UserCog,
+  UserPlus,
+  Users as UsersIcon,
+  X,
+} from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { apiError, del, get, getPage, patch, post, put } from '../lib/api'
 import { useStructure } from '../lib/hooks'
@@ -18,6 +32,7 @@ import {
   LoadingBlock,
   Modal,
   PageHeader,
+  Pagination,
   SearchInput,
   Select,
   StatusBadge,
@@ -60,11 +75,17 @@ type RoleRow = {
 
 type PermissionCatalog = { permissions: { key: string; label: string; group: string }[]; groups: Record<string, { key: string; label: string }[]> }
 
-type TabKey = 'accounts' | 'roles'
+type TabKey = 'accounts' | 'requests' | 'roles'
 
 export function UsersPage() {
   const { has } = useAuth()
   const [tab, setTab] = useState<TabKey>('accounts')
+  const { data: pendingRequests } = useQuery({
+    queryKey: ['access-requests-pending-count'],
+    queryFn: () => getPage<AccessRequestRow>('/access-requests', { status: 'pending', pageSize: 1 }),
+    enabled: has('users.view'),
+    refetchInterval: 60_000,
+  })
 
   return (
     <div className="space-y-5">
@@ -79,11 +100,15 @@ export function UsersPage() {
         onChange={setTab}
         tabs={[
           { key: 'accounts', label: 'Staff accounts' },
+          ...(has('users.view')
+            ? [{ key: 'requests' as TabKey, label: 'Access requests', count: pendingRequests?.meta.total }]
+            : []),
           { key: 'roles', label: 'Roles & permissions' },
         ]}
       />
 
       {tab === 'accounts' && <AccountsTab />}
+      {tab === 'requests' && <RequestsTab />}
       {tab === 'roles' && <RolesTab canManage={has('roles.manage')} />}
     </div>
   )
@@ -773,6 +798,339 @@ function CreateRoleModal({ open, catalog, onClose, onSaved }: { open: boolean; c
               </div>
             ))}
           </div>
+        </Field>
+      </div>
+    </Modal>
+  )
+}
+
+type AccessRequestRow = {
+  id: string
+  name: string
+  email: string
+  phone?: string
+  requestedRole: string
+  roleName?: string
+  reason?: string
+  status: 'pending' | 'approved' | 'rejected'
+  createdAt?: string
+  reviewedAt?: string
+  reviewedByName?: string
+  decisionNote?: string
+  notifications?: { email: boolean; whatsapp: boolean }
+}
+
+type ApproveResult = {
+  request: AccessRequestRow
+  user: { id: string; name: string; email: string }
+  created: boolean
+  temporaryPassword?: string
+  emailDelivered: boolean
+  whatsappDelivered: boolean
+  whatsappError?: string
+}
+
+const REQUEST_STATUS_TONE: Record<string, string> = { pending: 'amber', approved: 'emerald', rejected: 'red' }
+
+function RequestsTab() {
+  const { has } = useAuth()
+  const queryClient = useQueryClient()
+  const { error: toastError } = useToast()
+  const [status, setStatus] = useState('pending')
+  const [page, setPage] = useState(1)
+  const [approveTarget, setApproveTarget] = useState<AccessRequestRow | null>(null)
+  const [rejectTarget, setRejectTarget] = useState<AccessRequestRow | null>(null)
+  const [result, setResult] = useState<ApproveResult | null>(null)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['access-requests', status, page],
+    queryFn: () => getPage<AccessRequestRow>('/access-requests', { status, page, pageSize: 20 }),
+  })
+
+  function refresh() {
+    queryClient.invalidateQueries({ queryKey: ['access-requests'] })
+    queryClient.invalidateQueries({ queryKey: ['access-requests-pending-count'] })
+    queryClient.invalidateQueries({ queryKey: ['users'] })
+  }
+
+  const rows = data?.items ?? []
+
+  return (
+    <div className="space-y-4">
+      <Card className="flex flex-wrap items-center gap-2 p-4">
+        <Select
+          value={status}
+          onChange={(e) => {
+            setStatus(e.target.value)
+            setPage(1)
+          }}
+          className="sm:w-48"
+        >
+          <option value="pending">Pending approval</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+          <option value="all">All requests</option>
+        </Select>
+        <p className="ml-auto text-xs text-slate-500 dark:text-slate-400">
+          Requests arrive from the sign-in page. Approving creates the account and notifies the person.
+        </p>
+      </Card>
+
+      {isLoading ? (
+        <LoadingBlock label="Loading access requests…" />
+      ) : rows.length ? (
+        <Card className="divide-y divide-line dark:divide-[#1f2f49]">
+          {rows.map((request) => (
+            <div key={request.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-medium">{request.name}</p>
+                  <Badge tone={REQUEST_STATUS_TONE[request.status]}>{titleCase(request.status)}</Badge>
+                  <Badge tone="brand">{request.roleName ?? titleCase(request.requestedRole)}</Badge>
+                </div>
+                <p className="text-xs text-slate-400">
+                  {request.email}
+                  {request.phone ? ` · ${request.phone}` : ''}
+                </p>
+                {request.reason && <p className="text-sm text-slate-600 dark:text-slate-300">{request.reason}</p>}
+                <p className="text-[11px] text-slate-400">
+                  Requested {request.createdAt ? formatDate(request.createdAt) : '—'}
+                  {request.reviewedByName ? ` · reviewed by ${request.reviewedByName}` : ''}
+                </p>
+                {request.status === 'approved' && request.notifications && (
+                  <p className="text-[11px] text-slate-400">
+                    Email {request.notifications.email ? 'sent' : 'not delivered'} · WhatsApp{' '}
+                    {request.notifications.whatsapp ? 'sent' : 'not delivered'}
+                  </p>
+                )}
+                {request.status === 'rejected' && request.decisionNote && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Note: {request.decisionNote}</p>
+                )}
+              </div>
+              {request.status === 'pending' && has('users.create') && (
+                <div className="flex shrink-0 gap-2">
+                  <Button size="sm" icon={CheckCircle2} onClick={() => setApproveTarget(request)}>
+                    Approve
+                  </Button>
+                  <Button size="sm" variant="secondary" icon={X} onClick={() => setRejectTarget(request)}>
+                    Reject
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+          {data && <Pagination meta={data.meta} onPage={setPage} />}
+        </Card>
+      ) : (
+        <EmptyState
+          icon={Inbox}
+          title="No access requests"
+          message={
+            status === 'pending'
+              ? 'Requests submitted from the sign-in page will appear here for approval.'
+              : 'No requests match this filter yet.'
+          }
+        />
+      )}
+
+      {approveTarget && (
+        <ApproveRequestModal
+          request={approveTarget}
+          onClose={() => setApproveTarget(null)}
+          onApproved={(approved) => {
+            setApproveTarget(null)
+            setResult(approved)
+            refresh()
+          }}
+        />
+      )}
+
+      {rejectTarget && (
+        <RejectRequestModal
+          request={rejectTarget}
+          onClose={() => setRejectTarget(null)}
+          onRejected={() => {
+            setRejectTarget(null)
+            refresh()
+          }}
+          onError={(message) => toastError(message)}
+        />
+      )}
+
+      {result && (
+        <Modal
+          open
+          onClose={() => setResult(null)}
+          title="Access granted"
+          subtitle={result.user.email}
+          footer={<Button onClick={() => setResult(null)}>Done</Button>}
+        >
+          <div className="space-y-3 text-sm">
+            <Alert
+              tone={result.emailDelivered ? 'success' : 'warning'}
+              title={result.emailDelivered ? 'Approval email sent' : 'Email not delivered'}
+            >
+              {result.emailDelivered
+                ? `Sign-in details were emailed to ${result.user.email}.`
+                : 'Share this temporary password securely instead.'}
+            </Alert>
+            {result.temporaryPassword && (
+              <div className="rounded-lg border border-line bg-slate-50 p-3 font-mono text-base dark:border-[#1f2f49] dark:bg-white/[0.02]">
+                {result.temporaryPassword}
+              </div>
+            )}
+            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <MessageCircle className="h-4 w-4" />
+              WhatsApp: {result.whatsappDelivered ? 'delivered' : result.whatsappError || 'not delivered'}
+            </div>
+            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <Mail className="h-4 w-4" />
+              {result.emailDelivered ? 'Approval email delivered' : 'Approval email stored but not delivered'}
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+function ApproveRequestModal({
+  request,
+  onClose,
+  onApproved,
+}: {
+  request: AccessRequestRow
+  onClose: () => void
+  onApproved: (result: ApproveResult) => void
+}) {
+  const { data: roles } = useQuery({
+    queryKey: ['access-request-roles'],
+    queryFn: () => get<{ key: string; name: string }[]>('/auth/access-request/roles'),
+    staleTime: 10 * 60 * 1000,
+  })
+  const [roleKey, setRoleKey] = useState(request.requestedRole)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit() {
+    setError(null)
+    setBusy(true)
+    try {
+      const result = await post<ApproveResult>(`/access-requests/${request.id}/approve`, {
+        roleKey: roleKey || undefined,
+        note: note || undefined,
+      })
+      onApproved(result)
+    } catch (err) {
+      setError(apiError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Approve access request"
+      subtitle={`${request.name} · ${request.email}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button loading={busy} icon={CheckCircle2} onClick={submit}>
+            Approve and notify
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4 text-sm">
+        {error && <Alert tone="danger" title="Could not approve">{error}</Alert>}
+        <div className="space-y-1 rounded-lg border border-line p-3 dark:border-[#1f2f49]">
+          <p><span className="text-slate-500">Email:</span> {request.email}</p>
+          <p><span className="text-slate-500">Phone:</span> {request.phone || 'Not provided'}</p>
+          {request.reason && <p><span className="text-slate-500">Reason:</span> {request.reason}</p>}
+        </div>
+        <Field label="Role to grant" required>
+          <Select value={roleKey} onChange={(e) => setRoleKey(e.target.value)}>
+            {(roles ?? []).map((role) => (
+              <option key={role.key} value={role.key}>{role.name}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Note (optional)" hint="Included in the audit trail and, for rejections, in the message.">
+          <Textarea rows={2} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} />
+        </Field>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          A new account gets a temporary password. Sign-in details go by email
+          {request.phone ? ' and WhatsApp' : ''}.
+        </p>
+      </div>
+    </Modal>
+  )
+}
+
+function RejectRequestModal({
+  request,
+  onClose,
+  onRejected,
+  onError,
+}: {
+  request: AccessRequestRow
+  onClose: () => void
+  onRejected: () => void
+  onError: (message: string) => void
+}) {
+  const { success } = useToast()
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit() {
+    setError(null)
+    setBusy(true)
+    try {
+      await post(`/access-requests/${request.id}/reject`, { note: note || undefined })
+      success('Request rejected')
+      onRejected()
+    } catch (err) {
+      const message = apiError(err)
+      setError(message)
+      onError(message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Reject access request"
+      subtitle={`${request.name} · ${request.email}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="danger" loading={busy} onClick={submit}>
+            Reject request
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4 text-sm">
+        {error && <Alert tone="danger" title="Could not reject">{error}</Alert>}
+        <Field label="Reason (optional)" hint="The requester receives this note by email.">
+          <Textarea
+            rows={3}
+            maxLength={1000}
+            placeholder="e.g. Please ask the school office to confirm your employment details."
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
         </Field>
       </div>
     </Modal>

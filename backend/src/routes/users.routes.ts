@@ -19,7 +19,12 @@ import { listUserSessions, revokeSession } from '../services/session.service.js'
 import { writeAudit } from '../services/audit.service.js'
 import { inviteEmail, sendMail } from '../services/email.service.js'
 import { env } from '../config/env.js'
-import { objectId, paginationQuery, passwordField, searchRegex } from './helpers.js'
+import { assertObjectId, objectId, paginationQuery, passwordField, searchRegex } from './helpers.js'
+import {
+  approveAccessRequest,
+  listAccessRequests,
+  rejectAccessRequest,
+} from '../services/access-request.service.js'
 
 const router = Router()
 router.use(authenticate)
@@ -27,6 +32,10 @@ router.use(authenticate)
 const userListQuery = paginationQuery.extend({
   status: z.enum(['active', 'inactive', 'pending']).optional(),
   role: z.string().trim().optional(),
+})
+
+const accessRequestListQuery = paginationQuery.extend({
+  status: z.enum(['pending', 'approved', 'rejected', 'all']).optional(),
 })
 
 async function rolesForUsers(userIds: Types.ObjectId[]) {
@@ -386,6 +395,48 @@ router.get(
       grouped[p.group].push({ key: p.key, label: p.label })
     }
     ok(res, { permissions: list, groups: grouped })
+  }),
+)
+
+router.get(
+  '/access-requests',
+  requirePermission('users.view'),
+  validate({ query: accessRequestListQuery }),
+  asyncHandler(async (req, res) => {
+    const { page, pageSize, skip } = parsePagination(req.query)
+    const q = queryOf<z.infer<typeof accessRequestListQuery>>(req)
+    const status = q.status && q.status !== 'all' ? q.status : undefined
+    const { total, rows } = await listAccessRequests({ status, page, pageSize, skip })
+    ok(res, rows, pagedMeta(total, page, pageSize))
+  }),
+)
+
+router.post(
+  '/access-requests/:id/approve',
+  requirePermission('users.create'),
+  validate({
+    body: z.object({
+      roleKey: z.string().trim().min(2).max(60).optional(),
+      note: z.string().trim().max(1000).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const result = await approveAccessRequest(assertObjectId(req.params.id, 'access request'), req.auth!, req.body)
+    ok(res, result)
+  }),
+)
+
+router.post(
+  '/access-requests/:id/reject',
+  requirePermission('users.create'),
+  validate({
+    body: z.object({
+      note: z.string().trim().max(1000).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const result = await rejectAccessRequest(assertObjectId(req.params.id, 'access request'), req.auth!, req.body.note)
+    ok(res, result)
   }),
 )
 

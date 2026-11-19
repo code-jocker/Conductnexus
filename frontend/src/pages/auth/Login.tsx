@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowRight, Eye, EyeOff, KeyRound, Mail, MessageCircle, RotateCw, ShieldCheck } from 'lucide-react'
 import { AuthLayout } from '../../components/layout/AuthLayout'
+import { AccessRequestDialog } from '../../components/AccessRequestDialog'
 import { Alert, Button, Field, Input } from '../../components/ui'
 import { useAuth, type TwoFactorChallenge, type TwoFactorChannel } from '../../lib/auth'
 import { apiError, get } from '../../lib/api'
@@ -29,6 +30,7 @@ export function LoginPage() {
   const [status, setStatus] = useState<SetupStatus | null>(null)
   const [twoFactor, setTwoFactor] = useState<TwoFactorChallenge | null>(null)
   const [code, setCode] = useState('')
+  const [requestOpen, setRequestOpen] = useState(false)
 
   useEffect(() => {
     get<SetupStatus>('/auth/setup-status')
@@ -262,8 +264,14 @@ export function LoginPage() {
             </div>
           </Field>
 
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500 dark:text-slate-400">Accounts are created by your school administrator.</span>
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setRequestOpen(true)}
+              className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
+            >
+              Need an account? Request access
+            </button>
             <Link to="/forgot-password" className="link text-xs font-semibold">
               Forgot password?
             </Link>
@@ -297,6 +305,8 @@ export function LoginPage() {
       <p className="mt-6 text-center text-xs text-slate-400">
         Protected by role-based access, audit logging and Rwanda&apos;s data protection principles.
       </p>
+
+      <AccessRequestDialog open={requestOpen} onClose={() => setRequestOpen(false)} />
     </AuthLayout>
   )
 }

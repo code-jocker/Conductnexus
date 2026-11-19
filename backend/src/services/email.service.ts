@@ -194,6 +194,43 @@ export function inviteEmail(name: string, link: string, temporaryPassword?: stri
   }
 }
 
+export function accessReceivedEmail(name: string, roleName: string) {
+  return {
+    subject: 'We received your ConductNexus access request',
+    html: shell(
+      `Hello ${name},`,
+      `<p>Your request for <strong>${escapeHtml(roleName)}</strong> access to ConductNexus has been received.</p>
+       <p>A school administrator will review it. Once approved, you will receive another email and a WhatsApp message with your sign-in details.</p>
+       <p style="font-size:12px;color:#64748b">No further action is needed right now. If you already have an account, sign in or use the Forgot password option instead.</p>`,
+    ),
+  }
+}
+
+export function accessApprovedEmail(name: string, roleName: string, link: string, temporaryPassword?: string) {
+  return {
+    subject: 'Your ConductNexus access was approved',
+    html: shell(
+      `Hello ${name},`,
+      `<p>Your ConductNexus access request was approved. You have been granted the <strong>${escapeHtml(roleName)}</strong> role.</p>
+       ${temporaryPassword ? `<p>Temporary password: <strong style="font-family:Consolas,monospace">${temporaryPassword}</strong></p>` : '<p>Use your existing password to sign in.</p>'}
+       <p style="margin:22px 0"><a href="${link}" style="background:#2563eb;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">Sign in to ConductNexus</a></p>
+       <p style="font-size:12px;color:#64748b">Please change your password after signing in for the first time.</p>`,
+    ),
+  }
+}
+
+export function accessRejectedEmail(name: string, note?: string) {
+  return {
+    subject: 'Update on your ConductNexus access request',
+    html: shell(
+      `Hello ${name},`,
+      `<p>Your request for ConductNexus access was reviewed and could not be approved at this time.</p>
+       ${note ? `<p>Note from the school: ${escapeHtml(note)}</p>` : ''}
+       <p>If you believe this is a mistake, contact the school office directly so they can confirm your details.</p>`,
+    ),
+  }
+}
+
 export function twoFactorEmail(name: string, code: string) {
   return {
     subject: 'Your ConductNexus verification code',

@@ -74,6 +74,12 @@ export const openApiDocument = {
   paths: {
     '/auth/setup-status': { get: { tags: ['Auth'], summary: 'Check whether first-run setup is required', security: [] } },
     '/auth/setup': { post: { tags: ['Auth'], summary: 'Create the first administrator and school profile', security: [] } },
+    '/auth/access-request/roles': {
+      get: { tags: ['Auth'], summary: 'Roles the public may request from the sign-in page', security: [] },
+    },
+    '/auth/access-request': {
+      post: { tags: ['Auth'], summary: 'Request an account; an administrator must approve it', security: [] },
+    },
     '/auth/login': {
       post: {
         tags: ['Auth'],
@@ -147,6 +153,15 @@ export const openApiDocument = {
     '/users': {
       get: { tags: ['Users & RBAC'], summary: 'List users', parameters: [{ name: 'q', in: 'query', schema: { type: 'string' } }] },
       post: { tags: ['Users & RBAC'], summary: 'Create a staff user' },
+    },
+    '/access-requests': {
+      get: { tags: ['Users & RBAC'], summary: 'List account access requests awaiting review' },
+    },
+    '/access-requests/{id}/approve': {
+      post: { tags: ['Users & RBAC'], summary: 'Approve a request, create the account and notify the requester', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }] },
+    },
+    '/access-requests/{id}/reject': {
+      post: { tags: ['Users & RBAC'], summary: 'Reject a request and notify the requester', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }] },
     },
     '/users/{id}': {
       get: { tags: ['Users & RBAC'], summary: 'User detail', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }] },

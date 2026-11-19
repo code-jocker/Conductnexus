@@ -160,3 +160,31 @@ export const ROLE_SEEDS: RoleSeed[] = [
 ]
 
 export const ROLE_KEY_SET = new Set(ROLE_SEEDS.map((r) => r.key))
+
+// Roles a member of the public may ask for from the sign-in page. Administrator,
+// IT and parent accounts stay under direct school control.
+export const REQUESTABLE_ROLE_KEYS = [
+  'HEADTEACHER',
+  'DEPUTY_DISCIPLINE',
+  'TEACHER',
+  'PATRON',
+  'MATRON',
+  'BURSAR',
+  'DOS',
+  'LIBRARIAN',
+  'SECRETARY',
+] as const
+
+export type RequestableRoleKey = (typeof REQUESTABLE_ROLE_KEYS)[number]
+
+export function isRequestableRole(key: string): key is RequestableRoleKey {
+  return (REQUESTABLE_ROLE_KEYS as readonly string[]).includes(key)
+}
+
+export function requestableRoles(): { key: string; name: string; description: string }[] {
+  return ROLE_SEEDS.filter((role) => isRequestableRole(role.key)).map((role) => ({
+    key: role.key,
+    name: role.name,
+    description: role.description,
+  }))
+}

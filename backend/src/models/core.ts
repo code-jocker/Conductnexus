@@ -209,6 +209,45 @@ userRoleSchema.index({ userId: 1, roleId: 1 }, { unique: true })
 
 export const UserRole = model<IUserRole>('UserRole', userRoleSchema)
 
+export type AccessRequestStatus = 'pending' | 'approved' | 'rejected'
+
+export interface IAccessRequest extends Document {
+  name: string
+  email: string
+  phone?: string
+  requestedRole: string
+  reason?: string
+  status: AccessRequestStatus
+  reviewedBy?: Types.ObjectId
+  reviewedAt?: Date
+  decisionNote?: string
+  userId?: Types.ObjectId
+  notifications?: { email: boolean; whatsapp: boolean }
+  createdAt: Date
+  updatedAt: Date
+}
+
+const accessRequestSchema = new Schema<IAccessRequest>(
+  {
+    name: { type: String, required: true, trim: true, maxlength: 120 },
+    email: { type: String, required: true, lowercase: true, trim: true },
+    phone: { type: String, trim: true, maxlength: 30 },
+    requestedRole: { type: String, required: true },
+    reason: { type: String, trim: true, maxlength: 1000 },
+    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    reviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    reviewedAt: { type: Date },
+    decisionNote: { type: String, trim: true, maxlength: 1000 },
+    userId: { type: Schema.Types.ObjectId, ref: 'User' },
+    notifications: { email: { type: Boolean, default: false }, whatsapp: { type: Boolean, default: false } },
+  },
+  { timestamps: true },
+)
+accessRequestSchema.index({ status: 1, createdAt: -1 })
+accessRequestSchema.index({ email: 1 })
+
+export const AccessRequest = model<IAccessRequest>('AccessRequest', accessRequestSchema)
+
 export interface IUserPermissionOverride extends Document {
   userId: Types.ObjectId
   permission: string
