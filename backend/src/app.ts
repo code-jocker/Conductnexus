@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import express, { type Request, type Response } from 'express'
+import compression from 'compression'
 import helmet from 'helmet'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
@@ -23,6 +24,9 @@ export function createApp() {
       crossOriginResourcePolicy: { policy: 'same-site' },
     }),
   )
+  // JSON payloads (permissions, dashboards) are mostly text; gzip cuts them
+  // by ~80% on the slow mobile links this app is deployed onto.
+  app.use(compression())
 
   const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean)
   app.use(
