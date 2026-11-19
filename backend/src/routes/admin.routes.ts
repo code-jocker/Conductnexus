@@ -5,7 +5,7 @@ import { authenticate, requirePermission } from '../middleware/auth.js'
 import { asyncHandler, ok, parsePagination, pagedMeta, queryOf } from '../shared/http.js'
 import { ApiError } from '../shared/errors.js'
 import { getSettings } from '../models/core.js'
-import { emailConfigured, whatsappEnabled } from '../config/env.js'
+import { emailConfigured, whatsappAvailable } from '../config/env.js'
 import { AccessLog, AuditLog, BackupRecord, DataBreach, DataRequest, SyncLog } from '../models/governance.js'
 import { nextRef } from '../shared/refs.js'
 import { writeAudit } from '../services/audit.service.js'
@@ -112,7 +112,7 @@ adminRouter.patch(
     const patch = settingsPatchSchema.parse(req.body)
     // A school-wide 2FA requirement with no way to deliver codes would lock
     // every user out at the next sign-in, so refuse the setting instead.
-    if (patch.security?.requireTwoFactor === true && !emailConfigured && !whatsappEnabled) {
+    if (patch.security?.requireTwoFactor === true && !emailConfigured && !whatsappAvailable) {
       throw ApiError.badRequest(
         'Configure email (SMTP or Gmail OAuth2) or WhatsApp before requiring two-factor authentication, otherwise users cannot receive sign-in codes.',
       )

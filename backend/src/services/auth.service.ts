@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import jwt, { type SignOptions } from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { Types } from 'mongoose'
-import { emailConfigured, env, firebaseConfigured, isProd, whatsappEnabled } from '../config/env.js'
+import { emailConfigured, env, firebaseConfigured, isProd, whatsappAvailable } from '../config/env.js'
 import { Session, User, getSettings, type IUser, type SessionPlatform } from '../models/core.js'
 import { ApiError } from '../shared/errors.js'
 import { addDays, addMinutes, normalizeRwandaPhone, randomCode, randomToken, sha256 } from '../shared/utils.js'
@@ -160,7 +160,7 @@ function maskPhone(phone: string): string {
 
 function twoFactorChannels(user: IUser): TwoFactorChannel[] {
   // Only advertise WhatsApp where this deployment can actually send it.
-  return ['email', ...(user.phone && whatsappEnabled ? (['whatsapp'] as const) : [])]
+  return ['email', ...(user.phone && whatsappAvailable ? (['whatsapp'] as const) : [])]
 }
 
 async function deliverTwoFactorCode(

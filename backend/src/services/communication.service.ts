@@ -8,7 +8,14 @@ import { Incident } from '../models/discipline.js'
 import { Letter, MessageQueue, NotificationTemplate, WhatsappSession } from '../models/communications.js'
 import { ApiError } from '../shared/errors.js'
 import { logger } from '../shared/logger.js'
-import { emailConfigured, env, smsConfigured, whatsappEnabled } from '../config/env.js'
+import {
+  emailConfigured,
+  env,
+  smsConfigured,
+  whatsappAvailable,
+  whatsappEnabled,
+  whatsappGatewayConfigured,
+} from '../config/env.js'
 import { extractPlaceholders } from '../data/templateLibrary.js'
 import { sendMail } from './email.service.js'
 import { sendSms } from './sms.service.js'
@@ -238,6 +245,57 @@ let reconnectAttempts = 0
 const RECONNECT_MAX_ATTEMPTS = 6
 const RECONNECT_BASE_MS = 30_000
 
+type GatewaySnapshot = {
+  status: string
+  qrDataUrl?: string | null
+  pairingCode?: string | null
+  pairingPhone?: string | null
+  lastQrAt?: string | null
+  lastConnectedAt?: string | null
+  lastError?: string | null
+  info?: { pushname?: string; number?: string } | null
+}
+
+// The gateway owns the linked phone; this process only keeps the last poll so
+// the queue can decide whether WhatsApp rows may run without a network call.
+let gatewaySnapshot: GatewaySnapshot | null = null
+let gatewayError: string | null = null
+
+async function gatewayRequest<T>(pathname: string, init: RequestInit = {}): Promise<T> {
+  const base = env.WHATSAPP_GATEWAY_URL.replace(/\/+$/, '')
+  const response = await fetch(`${base}${pathname}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.WHATSAPP_GATEWAY_TOKEN}`,
+      ...(init.headers ?? {}),
+    },
+    // Status is polled every few seconds by the admin UI; keep a dead gateway
+    // from stacking slow requests.
+    signal: AbortSignal.timeout(pathname === '/status' ? 4_000 : 20_000),
+  })
+  const payload = (await response.json().catch(() => null)) as (T & { ok?: boolean; error?: string }) | null
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `WhatsApp gateway returned ${response.status}`)
+  }
+  return payload as T
+}
+
+async function refreshGatewaySnapshot(): Promise<GatewaySnapshot | null> {
+  try {
+    gatewaySnapshot = await gatewayRequest<GatewaySnapshot>('/status')
+    gatewayError = null
+  } catch (err) {
+    gatewaySnapshot = null
+    gatewayError = err instanceof Error ? err.message : 'WhatsApp gateway is unreachable'
+  }
+  return gatewaySnapshot
+}
+
+export function whatsappGatewayReady(): boolean {
+  return whatsappGatewayConfigured && gatewaySnapshot?.status === 'ready'
+}
+
 function clearReconnectTimer() {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
@@ -385,6 +443,21 @@ export function explainWhatsAppError(raw: unknown): string {
 }
 
 export async function startWhatsapp(phoneNumber?: string): Promise<{ status: string; message: string }> {
+  if (whatsappGatewayConfigured) {
+    try {
+      const result = await gatewayRequest<{ status: string; message: string }>('/connect', {
+        method: 'POST',
+        body: JSON.stringify({ phoneNumber }),
+      })
+      void refreshGatewaySnapshot()
+      return result
+    } catch (err) {
+      return {
+        status: 'failed',
+        message: err instanceof Error ? err.message : 'WhatsApp gateway is unreachable',
+      }
+    }
+  }
   if (!whatsappEnabled) {
     await persistStatus('disabled')
     return { status: 'disabled', message: 'WhatsApp is disabled. Enable ENABLE_WHATSAPP after installing whatsapp-web.js.' }
@@ -516,6 +589,17 @@ export async function stopWhatsapp() {
   // An admin-initiated disconnect is final until they connect again.
   clearReconnectTimer()
   reconnectAttempts = 0
+  if (whatsappGatewayConfigured) {
+    try {
+      await gatewayRequest('/disconnect', { method: 'POST' })
+    } catch (err) {
+      logger.warn({ err }, 'WhatsApp gateway disconnect failed')
+    }
+    gatewaySnapshot = null
+    gatewayError = null
+    await persistStatus('disconnected', { qrDataUrl: null, pairingCode: null, lastError: null })
+    return
+  }
   if (wa.client) {
     try {
       await wa.client.destroy()
@@ -528,6 +612,27 @@ export async function stopWhatsapp() {
 }
 
 export async function whatsappStatus() {
+  if (whatsappGatewayConfigured) {
+    const settings = await getSettings()
+    const snapshot = await refreshGatewaySnapshot()
+    const status = snapshot?.status ?? (gatewayError ? 'gateway_unavailable' : 'disconnected')
+    return {
+      status,
+      qrDataUrl: status === 'qr' ? snapshot?.qrDataUrl ?? null : null,
+      pairingCode: snapshot?.pairingCode ?? null,
+      pairingPhone: snapshot?.pairingPhone ?? null,
+      lastConnectedAt: snapshot?.lastConnectedAt ?? null,
+      lastError: gatewayError ?? snapshot?.lastError ?? null,
+      info: snapshot?.info ?? null,
+      // The gateway is the WhatsApp capability for this deployment; the school
+      // may still keep the channel switched off for recipients in Settings.
+      enabled: true,
+      settingsEnabled: settings.comms.whatsappEnabled,
+      moduleInitialized: Boolean(snapshot),
+      gateway: true,
+      gatewayUrl: env.WHATSAPP_GATEWAY_URL,
+    }
+  }
   const [session, settings] = await Promise.all([
     WhatsappSession.findOne({ sessionName: env.WHATSAPP_SESSION }),
     getSettings(),
@@ -556,6 +661,20 @@ type DeliveryResult = {
 }
 
 async function sendWhatsapp(to: string, body: string): Promise<DeliveryResult> {
+  if (whatsappGatewayConfigured) {
+    try {
+      const result = await gatewayRequest<{ providerMessageId?: string }>('/send', {
+        method: 'POST',
+        body: JSON.stringify({ to, body }),
+      })
+      return { ok: true, provider: 'whatsapp', providerMessageId: result.providerMessageId }
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'WhatsApp gateway send failed',
+      }
+    }
+  }
   if (!wa.client || wa.status !== 'ready') return { ok: false, error: 'WhatsApp is not connected' }
   try {
     const number = to.replace(/[^\d]/g, '')
@@ -577,7 +696,7 @@ async function sendWhatsapp(to: string, body: string): Promise<DeliveryResult> {
  * minutes, so it must be sent now and fail loudly when WhatsApp is offline.
  */
 export async function sendWhatsAppText(to: string, body: string): Promise<DeliveryResult> {
-  if (!whatsappEnabled) return { ok: false, error: 'WhatsApp is disabled on this server' }
+  if (!whatsappAvailable) return { ok: false, error: 'WhatsApp is disabled on this server' }
   return sendWhatsapp(to, body)
 }
 
@@ -633,16 +752,26 @@ let lastBlockedLog: Date | null = null
  * indistinguishable from a broken worker, so the reason is recorded and surfaced.
  */
 export function deliveryBlockReason(): { ready: boolean; status: string; enabled: boolean; reason: string | null } {
-  const status = wa.status
-  const enabled = whatsappEnabled
+  const enabled = whatsappAvailable
+  const status = whatsappGatewayConfigured
+    ? gatewaySnapshot?.status ?? (gatewayError ? 'gateway_unavailable' : 'connecting')
+    : wa.status
   if (status === 'ready') return { ready: true, status, enabled, reason: null }
+  if (whatsappGatewayConfigured && gatewayError) {
+    return {
+      ready: false,
+      status,
+      enabled,
+      reason: `The WhatsApp gateway is unreachable (${gatewayError}). Check that the gateway service is running.`,
+    }
+  }
   if (!enabled) {
     return {
       ready: false,
       status,
       enabled,
       reason:
-        'WhatsApp is disabled. Set ENABLE_WHATSAPP=true, restart the API, then link the phone by scanning the QR code.',
+        'WhatsApp is disabled. Set ENABLE_WHATSAPP=true or configure WHATSAPP_GATEWAY_URL, restart the API, then link the phone by scanning the QR code.',
     }
   }
   const reasons: Record<string, string> = {
@@ -651,6 +780,7 @@ export function deliveryBlockReason(): { ready: boolean; status: string; enabled
     connecting: 'WhatsApp is connecting to the phone.',
     disconnected: 'The WhatsApp session is disconnected. Re-link the phone if this persists.',
     disabled: 'The WhatsApp session is disabled.',
+    gateway_unavailable: 'The WhatsApp gateway is unreachable. Check that the gateway service is running.',
   }
   return {
     ready: false,
@@ -667,6 +797,7 @@ export async function processMessageQueue(limit = 20): Promise<{ processed: numb
   let failed = 0
   try {
     await refreshCommsSettings()
+    if (whatsappGatewayConfigured) await refreshGatewaySnapshot()
     await rerouteStrandedSms()
     // WhatsApp readiness gates WhatsApp rows only. Email and SMS keep flowing
     // while the phone is unlinked, so one broken channel cannot freeze the queue.

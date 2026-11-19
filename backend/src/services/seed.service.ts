@@ -1,4 +1,4 @@
-﻿import { env } from '../config/env.js'
+﻿import { env, whatsappAvailable } from '../config/env.js'
 import { getSettings, Permission, Role, RolePermission, User, UserRole } from '../models/core.js'
 import { AcademicYear, ClassModel, Dormitory, Stream, Term } from '../models/school.js'
 import { LetterTemplate, NotificationTemplate, WhatsappSession } from '../models/communications.js'
@@ -197,7 +197,7 @@ export async function seedSchoolDefaults(opts: {
 
   await WhatsappSession.findOneAndUpdate(
     { sessionName: env.WHATSAPP_SESSION },
-    { $setOnInsert: { status: env.ENABLE_WHATSAPP ? 'disconnected' : 'disabled' } },
+    { $setOnInsert: { status: whatsappAvailable ? 'disconnected' : 'disabled' } },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   )
 

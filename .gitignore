@@ -17,6 +17,7 @@ test-results/
 # WhatsApp web session artifacts — contain linked-device credentials
 .wwebjs_cache/
 .wwebjs_auth/
+whatsapp-gateway/storage/
 
 # Expo / React Native
 mobile/.expo/

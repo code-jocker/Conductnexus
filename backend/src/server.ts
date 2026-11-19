@@ -2,7 +2,7 @@ import http from 'node:http'
 import cron from 'node-cron'
 import { Server as SocketServer } from 'socket.io'
 import { createApp } from './app.js'
-import { env } from './config/env.js'
+import { env, whatsappGatewayConfigured } from './config/env.js'
 import { connectDatabase, disconnectDatabase } from './config/db.js'
 import { logger } from './shared/logger.js'
 import { verifyAccessToken } from './services/auth.service.js'
@@ -73,7 +73,9 @@ async function main() {
     processMessageQueue().catch((err) => logger.error({ err }, 'Message queue worker failed'))
   }, 60_000)
 
-  if (env.ENABLE_WHATSAPP) {
+  // A configured gateway owns the linked phone, so this process must not start
+  // a second browser against the same session.
+  if (env.ENABLE_WHATSAPP && !whatsappGatewayConfigured) {
     startWhatsapp()
       .then((r) => logger.info(r, 'WhatsApp worker start requested'))
       .catch((err) => logger.error({ err }, 'Failed to start WhatsApp session'))

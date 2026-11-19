@@ -7,7 +7,7 @@
 | In-app | `Notification` collection + Socket.IO `notification:new` | Always on. |
 | Push | `services/push.service.ts` → Expo push | `EXPO_ACCESS_TOKEN` for production. |
 | Email | Nodemailer | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`. |
-| WhatsApp | `whatsapp-web.js` | `ENABLE_WHATSAPP=true`; session under `WHATSAPP_SESSION`. |
+| WhatsApp | `whatsapp-web.js` (in-process, or the always-on `whatsapp-gateway/`) | `ENABLE_WHATSAPP=true` with a persistent disk, **or** `WHATSAPP_GATEWAY_URL` + `WHATSAPP_GATEWAY_TOKEN` pointing at `whatsapp-gateway/`. See `whatsapp-gateway/README.md`. |
 | SMS | Africa's Talking | `AT_USERNAME`, `AT_API_KEY`, `AT_SENDER_ID`, `AT_SMS_URL`. |
 
 Email, WhatsApp and SMS are sent through the durable `MessageQueue` collection by

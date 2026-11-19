@@ -36,14 +36,17 @@ services:
       - key: BACKUP_RETENTION_DAYS
         value: "30"
       # Render's free plan has an ephemeral filesystem, so the linked WhatsApp
-      # device is wiped on every deploy/restart. Leave this false here and run
-      # the gateway on a host with a persistent disk, or upgrade to a paid plan
-      # with a disk mounted at backend/storage.
+      # device cannot live here. Keep the in-process browser off and point the
+      # API at the always-on gateway in whatsapp-gateway/ instead.
       - key: ENABLE_WHATSAPP
         value: "false"
       - key: WHATSAPP_SESSION
         value: "conductnexus"
       - key: WHATSAPP_PAIR_PHONE
+        sync: false
+      - key: WHATSAPP_GATEWAY_URL
+        sync: false
+      - key: WHATSAPP_GATEWAY_TOKEN
         sync: false
       - key: SMTP_HOST
         sync: false

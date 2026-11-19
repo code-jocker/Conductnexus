@@ -68,6 +68,12 @@ const envSchema = z.object({
   WHATSAPP_EXECUTABLE_PATH: z.string().optional().default(''),
   WHATSAPP_RESOLVER_IP: z.string().optional().default(''),
   WHATSAPP_PAIR_PHONE: z.string().optional().default(''),
+  WHATSAPP_GATEWAY_URL: z
+    .string()
+    .optional()
+    .default('')
+    .refine((v) => !v || /^https?:\/\//.test(v), 'WHATSAPP_GATEWAY_URL must start with http:// or https://'),
+  WHATSAPP_GATEWAY_TOKEN: z.string().optional().default(''),
   AT_USERNAME: z.string().optional().default(''),
   AT_API_KEY: z.string().optional().default(''),
   AT_SENDER_ID: z.string().optional().default(''),
@@ -140,3 +146,7 @@ export function parseMailFrom(value: string): { name: string; email: string } {
 export const smsConfigured = Boolean(env.AT_USERNAME && env.AT_API_KEY)
 export const firebaseConfigured = Boolean(env.FIREBASE_PROJECT_ID)
 export const whatsappEnabled = env.ENABLE_WHATSAPP
+export const whatsappGatewayConfigured = Boolean(env.WHATSAPP_GATEWAY_URL && env.WHATSAPP_GATEWAY_TOKEN)
+// WhatsApp is usable when this process runs the browser itself or when an
+// always-on gateway (with the linked phone) is configured instead.
+export const whatsappAvailable = whatsappEnabled || whatsappGatewayConfigured

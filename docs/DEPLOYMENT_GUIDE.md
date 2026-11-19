@@ -42,8 +42,10 @@ Node.js **20+** (22 LTS recommended) is used on Render via `NODE_VERSION`.
 | `BACKUP_ENCRYPTION_KEY` | for backups | 64 hex characters — store outside Git |
 | `BACKUP_SCHEDULE` | no | Cron, default `0 2 * * *` |
 | `BACKUP_RETENTION_DAYS` | no | Default `30` |
-| `ENABLE_WHATSAPP` | no | Requires Chromium/Edge on the host; keep `false` on free tiers |
+| `ENABLE_WHATSAPP` | no | Runs the browser inside this API; requires Chromium/Edge and a persistent disk. Keep `false` on free tiers |
 | `WHATSAPP_PAIR_PHONE` | no | Digits with country code for pairing-code linking |
+| `WHATSAPP_GATEWAY_URL` | no | Base URL of an always-on `whatsapp-gateway/` server (HTTPS) |
+| `WHATSAPP_GATEWAY_TOKEN` | no | Bearer token shared with that gateway; required together with the URL |
 | `EXPO_ACCESS_TOKEN` | for push | Only if Expo enhanced push security is enabled |
 | `AT_USERNAME`, `AT_API_KEY`, `AT_SENDER_ID` | for SMS | SMS stays off until enabled in Settings |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SCHOOL_NAME` | first run only | Used by `npm run setup` |
