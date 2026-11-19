@@ -87,3 +87,34 @@ services:
         sync: false
       - key: SCHOOL_NAME
         sync: false
+
+  # WhatsApp gateway — owns the linked phone and its browser.
+  #
+  # The free Render plan has an ephemeral filesystem and no Chromium, so the
+  # in-process browser cannot live here. This service runs Docker with Chrome
+  # baked in and a persistent disk for the session, and the API proxies status
+  # and sends through it (see WHATSAPP_GATEWAY_URL / WHATSAPP_GATEWAY_TOKEN).
+  - type: docker
+    name: conductnexus-whatsapp-gateway
+    plan: starter
+    region: frankfurt
+    dockerfilePath: whatsapp-gateway/Dockerfile
+    disk:
+      name: whatsapp-session
+      mountPath: /app/storage
+      sizeGB: 1
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "3100"
+      - key: GATEWAY_TOKEN
+        sync: false
+      - key: SESSION_DIR
+        value: /app/storage/whatsapp-session
+      - key: SESSION_NAME
+        value: conductnexus
+      - key: AUTO_CONNECT
+        value: "true"
+      - key: RECONNECT_MAX_MS
+        value: "120000"
