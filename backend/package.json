@@ -27,7 +27,8 @@
     "typecheck": "tsc --noEmit",
     "setup": "tsx src/scripts/setup.ts",
     "worker": "tsx src/worker.ts",
-    "worker:start": "node dist/worker.js"
+    "worker:start": "node dist/worker.js",
+    "mail:test": "tsx src/scripts/test-email.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

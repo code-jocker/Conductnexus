@@ -32,19 +32,32 @@ from starting when it is missing or malformed.
 | `SMTP_SECURE` | — | no | `true` for implicit TLS (usually port 465). |
 | `SMTP_USER` | `''` | no | |
 | `SMTP_PASS` | `''` | no | For Gmail, use a 16-character App Password, not the account password. |
-| `MAIL_FROM` | derived | no | Envelope sender. When empty it becomes `ConductNexus <GMAIL_USER>`, or the no-reply address if Gmail OAuth is not configured. Gmail requires it to match the authenticated account. |
+| `MAIL_FROM` | derived | no | Envelope sender, `Name <email>` form. When empty it becomes `ConductNexus <MAILJET_SENDER>`, then `ConductNexus <GMAIL_USER>`, then the no-reply address. Gmail requires it to match the authenticated account. |
+| `MAILJET_API_KEY` | `''` | no | Mailjet API key. With `MAILJET_API_SECRET` this enables the Mailjet Send API v3.1, which takes precedence over Gmail OAuth2 and SMTP. |
+| `MAILJET_API_SECRET` | `''` | no | Mailjet secret key (the password half of the Basic auth pair). |
+| `MAILJET_SENDER` | `''` | no | Sending address; must be validated under Mailjet → Senders & Domains, otherwise Mailjet rejects the message. |
 | `GMAIL_USER` | `''` | no | Gmail account address. Setting all four `GMAIL_*` values enables OAuth2 delivery, which takes precedence over `SMTP_*`. |
 | `GMAIL_CLIENT_ID` | `''` | no | Google Cloud OAuth client ID. |
 | `GMAIL_CLIENT_SECRET` | `''` | no | Google Cloud OAuth client secret. |
 | `GMAIL_REFRESH_TOKEN` | `''` | no | Refresh token authorised for `https://mail.google.com/`. |
 | `TWO_FACTOR_RESEND_SECONDS` | `60` | no | Minimum gap between new sign-in codes (30–300). |
 
+### Mailjet (send API)
+
+1. In Mailjet → Senders & Domains, add and verify the sending address (or
+   authenticate its domain). An unverified sender is rejected.
+2. Set `MAILJET_API_KEY` and `MAILJET_API_SECRET` (Account → API key
+   management) and `MAILJET_SENDER=<verified address>`.
+3. Verify with `npm run mail:test -- you@example.com`.
+
+Mailjet is preferred over Gmail OAuth2 and SMTP whenever both keys are set.
+Rejections are recorded on the `MailMessage` row and logged as
+`Mailjet rejected the message: ...`.
+
 ### Gmail delivery for verification and two-factor codes
 
 A Google API key cannot send Gmail; the Gmail API needs delegated user
-credentials. Use either:
-
-1. **App password (quickest):** turn on 2-Step Verification for the account,
+credentials. Use either:1. **App password (quickest):** turn on 2-Step Verification for the account,
    create an App Password, then set `SMTP_HOST=smtp.gmail.com`,
    `SMTP_PORT=465`, `SMTP_SECURE=true`, `SMTP_USER=<address>` and
    `SMTP_PASS=<16-character app password>`.

@@ -242,7 +242,7 @@ export interface IMailMessage extends Document {
   html: string
   text?: string
   status: 'queued' | 'sent' | 'failed' | 'stored'
-  provider: 'smtp' | 'outbox'
+  provider: 'mailjet' | 'smtp' | 'outbox'
   error?: string
   createdAt: Date
 }
@@ -254,7 +254,7 @@ const mailSchema = new Schema<IMailMessage>(
     html: { type: String, required: true },
     text: { type: String },
     status: { type: String, enum: ['queued', 'sent', 'failed', 'stored'], default: 'queued' },
-    provider: { type: String, enum: ['smtp', 'outbox'], default: 'outbox' },
+    provider: { type: String, enum: ['mailjet', 'smtp', 'outbox'], default: 'outbox' },
     error: { type: String },
   },
   { timestamps: { createdAt: true, updatedAt: false } },

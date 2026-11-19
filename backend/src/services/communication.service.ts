@@ -8,7 +8,7 @@ import { Incident } from '../models/discipline.js'
 import { Letter, MessageQueue, NotificationTemplate, WhatsappSession } from '../models/communications.js'
 import { ApiError } from '../shared/errors.js'
 import { logger } from '../shared/logger.js'
-import { env, smsConfigured, smtpConfigured, whatsappEnabled } from '../config/env.js'
+import { emailConfigured, env, smsConfigured, whatsappEnabled } from '../config/env.js'
 import { extractPlaceholders } from '../data/templateLibrary.js'
 import { sendMail } from './email.service.js'
 import { sendSms } from './sms.service.js'
@@ -76,7 +76,7 @@ function channelsFor(parent: InstanceType<typeof Parent>): Array<'whatsapp' | 'e
   if (settings.comms.whatsappEnabled && parent.whatsappConsent && String(parent.phone ?? '').trim()) {
     enabled.push('whatsapp')
   }
-  if (smtpConfigured && parent.emailConsent && String(parent.email ?? '').trim()) {
+  if (emailConfigured && parent.emailConsent && String(parent.email ?? '').trim()) {
     enabled.push('email')
   }
   if (settings.comms.smsEnabled && smsConfigured && parent.smsConsent && String(parent.phone ?? '').trim()) {
@@ -812,7 +812,7 @@ export async function retryMessage(id: string) {
       throw ApiError.badRequest('This message has no phone number. Delete it instead of retrying.')
     }
   } else if (msg.channel === 'email') {
-    if (!smtpConfigured) throw ApiError.badRequest('Configure SMTP before retrying this email.')
+    if (!emailConfigured) throw ApiError.badRequest('Configure SMTP before retrying this email.')
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(msg.to.trim())) {
       throw ApiError.badRequest('This message has no valid email address. Delete it instead of retrying.')
     }
@@ -888,7 +888,7 @@ export async function purgeNonWhatsappFailures(): Promise<{ purged: number; byCh
   const settings = getSettingsSync()
   const unavailable: string[] = []
   if (!settings?.comms.smsEnabled || !smsConfigured) unavailable.push('sms')
-  if (!smtpConfigured) unavailable.push('email')
+  if (!emailConfigured) unavailable.push('email')
   if (!unavailable.length) return { purged: 0, byChannel: {} }
   const match = {
     channel: { $in: unavailable },

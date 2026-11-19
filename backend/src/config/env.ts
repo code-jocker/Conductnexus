@@ -11,7 +11,15 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   APP_URL: z.string().default('http://localhost:5173'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
-  MONGODB_URI: z.string().default('mongodb://127.0.0.1:27017/conductnexus'),
+  MONGODB_URI: z
+    .string()
+    .default('mongodb://127.0.0.1:27017/conductnexus')
+    // Copying the .env.example line verbatim leaves CLUSTER_HOST in place and
+    // only surfaces later as "querySrv ENOTFOUND _mongodb._tcp.CLUSTER_HOST".
+    .refine(
+      (v) => !['CLUSTER_HOST', 'USERNAME', 'PASSWORD'].some((p) => v.includes(p)),
+      'MONGODB_URI still contains a placeholder — paste the real Atlas connection string from Atlas → Connect → Drivers',
+    ),
   JWT_ACCESS_SECRET: z.string().min(16, 'JWT_ACCESS_SECRET must be at least 16 characters'),
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().default(14),
@@ -35,6 +43,18 @@ const envSchema = z.object({
   GMAIL_CLIENT_ID: z.string().optional().default(''),
   GMAIL_CLIENT_SECRET: z.string().optional().default(''),
   GMAIL_REFRESH_TOKEN: z.string().optional().default(''),
+  /**
+   * Mailjet (Send API v3.1). The API key + secret pair is used as HTTP Basic
+   * auth. The sending address must already be validated under
+   * Mailjet → Senders & Domains, otherwise Mailjet rejects the message.
+   */
+  MAILJET_API_KEY: z.string().optional().default(''),
+  MAILJET_API_SECRET: z.string().optional().default(''),
+  MAILJET_SENDER: z
+    .string()
+    .optional()
+    .default('')
+    .refine((v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), 'MAILJET_SENDER must be an email address'),
   TWO_FACTOR_RESEND_SECONDS: z.coerce.number().min(30).max(300).default(60),
   BACKUP_ENCRYPTION_KEY: z.string().optional().default(''),
   EVIDENCE_ENCRYPTION_KEY: z.string().optional().default(''),
@@ -102,12 +122,21 @@ export const backupEncryptionKeyConfigured = env.BACKUP_ENCRYPTION_KEY.trim().le
 export const gmailOAuthConfigured = Boolean(
   env.GMAIL_USER && env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_REFRESH_TOKEN,
 )
-export const smtpConfigured = Boolean(
-  (env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS) || gmailOAuthConfigured,
+export const mailjetConfigured = Boolean(env.MAILJET_API_KEY && env.MAILJET_API_SECRET)
+/** True when any email transport (Mailjet, Gmail OAuth2, SMTP) can send. */
+export const emailConfigured = Boolean(
+  mailjetConfigured || gmailOAuthConfigured || (env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS),
 )
 export const mailFrom =
   env.MAIL_FROM.trim() ||
+  (env.MAILJET_SENDER ? `ConductNexus <${env.MAILJET_SENDER}>` : '') ||
   (env.GMAIL_USER ? `ConductNexus <${env.GMAIL_USER}>` : 'ConductNexus <no-reply@conductnexus.rw>')
+
+export function parseMailFrom(value: string): { name: string; email: string } {
+  const match = value.match(/^\s*(.*?)\s*<([^>]+)>\s*$/)
+  if (match) return { name: match[1] || 'ConductNexus', email: match[2].trim() }
+  return { name: 'ConductNexus', email: value.trim() }
+}
 export const smsConfigured = Boolean(env.AT_USERNAME && env.AT_API_KEY)
 export const firebaseConfigured = Boolean(env.FIREBASE_PROJECT_ID)
 export const whatsappEnabled = env.ENABLE_WHATSAPP

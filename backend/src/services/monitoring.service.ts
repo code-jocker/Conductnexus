@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import mongoose from 'mongoose'
 import { pingDatabase } from '../config/db.js'
-import { env, firebaseConfigured, smtpConfigured, whatsappEnabled } from '../config/env.js'
+import { emailConfigured, env, firebaseConfigured, whatsappEnabled } from '../config/env.js'
 import { getSettings } from '../models/core.js'
 import { Approval, DisciplineLedger, Incident } from '../models/discipline.js'
 import { BackupRecord, ErrorLog } from '../models/governance.js'
@@ -189,7 +189,7 @@ export async function systemSnapshot() {
     storage: { usedBytes: storage },
     integrations: {
       mongodb: dbOk,
-      smtp: smtpConfigured,
+      smtp: emailConfigured,
       firebase: firebaseConfigured,
       whatsappEnabled,
       whatsappConnected: wa.status === 'ready',

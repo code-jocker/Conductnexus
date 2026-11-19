@@ -31,7 +31,7 @@ import {
   type TwoFactorChannel,
 } from '../services/auth.service.js'
 import { getSettings, User as UserModel } from '../models/core.js'
-import { firebaseConfigured, smtpConfigured } from '../config/env.js'
+import { emailConfigured, firebaseConfigured } from '../config/env.js'
 import { invalidateUserAccess } from '../services/rbac.service.js'
 import { listUserSessions, registerPushToken, removePushToken, revokeSession } from '../services/session.service.js'
 import { actorOf, passwordField } from './helpers.js'
@@ -614,7 +614,7 @@ router.get(
         schoolMotto: settings.school.motto,
         timezone: settings.academic.timezone,
         language: settings.academic.language,
-        smtpConfigured,
+        emailConfigured,
         firebaseConfigured,
       },
     })

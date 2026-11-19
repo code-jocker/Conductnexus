@@ -1,12 +1,20 @@
 import nodemailer, { type Transporter } from 'nodemailer'
-import { env, gmailOAuthConfigured, mailFrom, smtpConfigured } from '../config/env.js'
+import {
+  env,
+  gmailOAuthConfigured,
+  mailFrom,
+  mailjetConfigured,
+  parseMailFrom,
+} from '../config/env.js'
 import { MailMessage } from '../models/core.js'
 import { logger } from '../shared/logger.js'
 import { escapeHtml } from '../shared/utils.js'
 
+const smtpCredentialsConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS)
+
 let transporter: Transporter | null = null
 function getTransporter(): Transporter | null {
-  if (!smtpConfigured) return null
+  if (!gmailOAuthConfigured && !smtpCredentialsConfigured) return null
   if (!transporter) {
     transporter = gmailOAuthConfigured
       ? nodemailer.createTransport({
@@ -31,21 +39,69 @@ function getTransporter(): Transporter | null {
 
 export type MailResult = { delivered: boolean; stored: boolean; id?: string }
 
+type MailjetMessage = {
+  Status?: string
+  Errors?: unknown
+  To?: Array<{ MessageID?: string }>
+}
+
+const htmlToText = (html: string) =>
+  html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+async function sendViaMailjet(input: { to: string; subject: string; html: string; text?: string }): Promise<void> {
+  const from = parseMailFrom(mailFrom)
+  const auth = Buffer.from(`${env.MAILJET_API_KEY}:${env.MAILJET_API_SECRET}`).toString('base64')
+  const response = await fetch('https://api.mailjet.com/v3.1/send', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      Messages: [
+        {
+          From: { Email: from.email, Name: from.name },
+          To: [{ Email: input.to }],
+          Subject: input.subject,
+          HTMLPart: input.html,
+          TextPart: input.text ?? htmlToText(input.html),
+        },
+      ],
+    }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  const raw = await response.text()
+  if (!response.ok) {
+    throw new Error(`Mailjet rejected the request (${response.status}): ${raw.slice(0, 300)}`)
+  }
+  let message: MailjetMessage | undefined
+  try {
+    message = (JSON.parse(raw) as { Messages?: MailjetMessage[] }).Messages?.[0]
+  } catch {
+    // 2xx with a non-JSON body is still an accepted delivery.
+    return
+  }
+  if (message?.Status === 'error') {
+    throw new Error(`Mailjet rejected the message: ${JSON.stringify(message.Errors ?? {}).slice(0, 300)}`)
+  }
+}
+
 export async function sendMail(input: { to: string; subject: string; html: string; text?: string }): Promise<MailResult> {
+  const transport = mailjetConfigured ? 'mailjet' : getTransporter() ? 'smtp' : 'outbox'
   const record = await MailMessage.create({
     to: input.to,
     subject: input.subject,
     html: input.html,
     text: input.text,
     status: 'queued',
-    provider: smtpConfigured ? 'smtp' : 'outbox',
+    provider: transport === 'outbox' ? 'outbox' : transport,
   })
 
-  const tx = getTransporter()
-  if (!tx) {
+  if (transport === 'outbox') {
     record.status = 'stored'
     await record.save()
-    logger.info({ to: input.to, subject: input.subject }, 'SMTP not configured — email stored in dev outbox')
+    logger.info({ to: input.to, subject: input.subject }, 'Email transport not configured — email stored in outbox')
     if (env.NODE_ENV !== 'production') {
       logger.debug({ html: input.html }, 'Outbox email body')
     }
@@ -53,19 +109,23 @@ export async function sendMail(input: { to: string; subject: string; html: strin
   }
 
   try {
-    await tx.sendMail({
-      from: mailFrom,
-      to: input.to,
-      subject: input.subject,
-      html: input.html,
-      text: input.text,
-    })
+    if (transport === 'mailjet') {
+      await sendViaMailjet(input)
+    } else {
+      await getTransporter()!.sendMail({
+        from: mailFrom,
+        to: input.to,
+        subject: input.subject,
+        html: input.html,
+        text: input.text,
+      })
+    }
     record.status = 'sent'
     await record.save()
     return { delivered: true, stored: false, id: String(record._id) }
   } catch (err) {
     record.status = 'failed'
-    record.error = err instanceof Error ? err.message : 'Unknown SMTP error'
+    record.error = err instanceof Error ? err.message : 'Unknown email delivery error'
     await record.save()
     logger.error({ err }, 'Email delivery failed')
     return { delivered: false, stored: true, id: String(record._id) }

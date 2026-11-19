@@ -67,6 +67,13 @@ services:
         sync: false
       - key: GMAIL_REFRESH_TOKEN
         sync: false
+      # Mailjet Send API takes precedence over Gmail/SMTP when both keys are set.
+      - key: MAILJET_API_KEY
+        sync: false
+      - key: MAILJET_API_SECRET
+        sync: false
+      - key: MAILJET_SENDER
+        sync: false
       - key: TWO_FACTOR_RESEND_SECONDS
         value: "60"
       - key: ADMIN_EMAIL

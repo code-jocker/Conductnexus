@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import jwt, { type SignOptions } from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { Types } from 'mongoose'
-import { env, firebaseConfigured, isProd, smtpConfigured, whatsappEnabled } from '../config/env.js'
+import { emailConfigured, env, firebaseConfigured, isProd, whatsappEnabled } from '../config/env.js'
 import { Session, User, getSettings, type IUser, type SessionPlatform } from '../models/core.js'
 import { ApiError } from '../shared/errors.js'
 import { addDays, addMinutes, normalizeRwandaPhone, randomCode, randomToken, sha256 } from '../shared/utils.js'
@@ -615,7 +615,7 @@ export async function sendVerificationEmail(user: IUser): Promise<{ delivered: b
   const result = await sendMail({ to: user.email, ...mail })
   return {
     delivered: result.delivered,
-    devToken: !isProd && !smtpConfigured ? token : undefined,
+    devToken: !isProd && !emailConfigured ? token : undefined,
   }
 }
 
@@ -654,8 +654,8 @@ export async function requestPasswordReset(emailInput: string): Promise<{
   const result = await sendMail({ to: user.email, ...mail })
   return {
     delivered: result.delivered,
-    devCode: !isProd && !smtpConfigured ? code : undefined,
-    devToken: !isProd && !smtpConfigured ? token : undefined,
+    devCode: !isProd && !emailConfigured ? code : undefined,
+    devToken: !isProd && !emailConfigured ? token : undefined,
   }
 }
 
@@ -741,7 +741,7 @@ export async function setupStatus() {
     hasUsers: Boolean(hasAdmin),
     schoolName: settings.school.name,
     firebaseConfigured,
-    smtpConfigured,
+    emailConfigured,
   }
 }
 
