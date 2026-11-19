@@ -329,7 +329,7 @@ export type Settings = {
   comms: { whatsappEnabled: boolean; smsEnabled: boolean; quietHoursStart: number; quietHoursEnd: number; retryLimit: number; notifyOnDeduction: boolean }
   backup: { schedule: string; retentionDays: number; rpoHours: number; rtoHours: number; lastRunAt?: string; lastStatus?: string }
   retention: { studentRecordsYears: number; disciplineYears: number; evidenceYears: number; auditYears: number; safeguardingYears: number }
-  security: { maxFailedLogins: number; lockoutMinutes: number; sessionDays: number; requireEmailVerification: boolean }
+  security: { maxFailedLogins: number; lockoutMinutes: number; sessionDays: number; requireEmailVerification: boolean; requireTwoFactor: boolean }
   setupCompleted: boolean
 }
 

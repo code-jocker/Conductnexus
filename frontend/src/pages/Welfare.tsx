@@ -147,7 +147,7 @@ function studentRef(ref: StudentRef): string {
   if (!ref || typeof ref === 'string') return ''
   return ref.studentId ?? ''
 }
-function personName(ref: PersonRef): string {
+function personName(ref: PersonRef | undefined): string {
   if (!ref) return 'Unassigned'
   return typeof ref === 'string' ? ref : ref.name ?? 'Staff'
 }
