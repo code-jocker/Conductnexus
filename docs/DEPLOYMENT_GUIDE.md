@@ -161,7 +161,7 @@ Add the Firebase domain(s) to `CORS_ORIGIN` before testing sign-in.
 
 1. Open the site over HTTPS, sign in, then use the browser's install action.
 2. DevTools → Application → Service Workers: `sw.js` is **activated**.
-3. DevTools → Application → Cache Storage: `conductnexus-v1-shell` contains `/`,
+3. DevTools → Application → Cache Storage: `conductnexus-v2-shell` contains `/`,
    `index.html`, `offline.html`, the manifest and icons.
 4. Enable "Offline" and reload: the offline page or cached shell appears; API calls fail
    gracefully and the app shows the offline banner.

@@ -112,7 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const token = getToken()
     const url = import.meta.env.VITE_SOCKET_URL || window.location.origin
-    const s = io(url, { path: '/socket.io', auth: { token }, transports: ['websocket', 'polling'] })
+    const s = io(url, { path: '/socket.io', auth: { token }, transports: ['polling', 'websocket'] })
     setSocket(s)
     return () => {
       s.disconnect()
