@@ -423,7 +423,7 @@ export function ImportStudents({ open, onClose }: { open: boolean; onClose: () =
                 </Alert>
               )}
 
-              <div className="max-h-[360px] overflow-y-auto rounded-xl border border-line dark:border-[#26374f]">
+              <div className="max-h-[360px] overflow-x-auto overflow-y-auto rounded-xl border border-line dark:border-[#26374f]">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-slate-50 dark:bg-[#101a2c]">
                     <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-slate-400 dark:border-[#26374f]">

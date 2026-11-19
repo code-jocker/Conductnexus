@@ -502,7 +502,7 @@ function BatchDetailPanel({
 
       <div>
         <h4 className="mb-2 text-sm font-semibold">Students</h4>
-        <div className="max-h-72 overflow-y-auto rounded-lg border border-line dark:border-[#1f2f49]">
+        <div className="max-h-72 overflow-x-auto overflow-y-auto rounded-lg border border-line dark:border-[#1f2f49]">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-400 dark:bg-[#0f1a2b]">
               <tr>

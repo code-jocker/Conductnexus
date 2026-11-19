@@ -1447,7 +1447,7 @@ function WhatsappTab() {
 
   const { data: status } = useQuery({
     queryKey: ['whatsapp-status'],
-    queryFn: () => get<{ status: string; enabled: boolean; qrDataUrl?: string; pairingCode?: string; pairingPhone?: string; lastConnectedAt?: string; lastError?: string; info?: { pushname?: string; number?: string } }>('/whatsapp/status'),
+    queryFn: () => get<{ status: string; enabled: boolean; settingsEnabled?: boolean; qrDataUrl?: string; pairingCode?: string; pairingPhone?: string; lastConnectedAt?: string; lastError?: string; info?: { pushname?: string; number?: string } }>('/whatsapp/status'),
     refetchInterval: 6_000,
   })
 
@@ -1505,7 +1505,7 @@ function WhatsappTab() {
             <p className="text-sm font-semibold">WhatsApp gateway</p>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <StatusBadge status={state} />
-              {status?.enabled ? <Badge tone="emerald">Enabled in settings</Badge> : <Badge tone="amber">Disabled in settings</Badge>}
+              {status?.settingsEnabled ? <Badge tone="emerald">Enabled in settings</Badge> : <Badge tone="amber">Disabled in settings</Badge>}
             </div>
           </div>
         </div>
@@ -1518,10 +1518,12 @@ function WhatsappTab() {
 
         {status?.lastError && <div className="mt-3"><Alert tone="danger" title="Last error">{status.lastError}</Alert></div>}
 
-        {!status?.enabled && (
+        {status && !status.enabled && (
           <div className="mt-4">
-            <Alert tone="warning" title="WhatsApp is switched off">
-              An administrator must enable WhatsApp in Settings â†’ Communications before the gateway can connect. Parent messaging is WhatsApp only.
+            <Alert tone="warning" title="WhatsApp gateway not available on this server">
+              {status.settingsEnabled
+                ? 'WhatsApp is switched on in Settings, but this deployment runs without a WhatsApp gateway (ENABLE_WHATSAPP=false). Messages queue and fail until the gateway runs on a host with persistent storage.'
+                : 'An administrator must enable WhatsApp in Settings > Communications before the gateway can connect. Parent messaging is WhatsApp only.'}
             </Alert>
           </div>
         )}

@@ -528,7 +528,10 @@ export async function stopWhatsapp() {
 }
 
 export async function whatsappStatus() {
-  const session = await WhatsappSession.findOne({ sessionName: env.WHATSAPP_SESSION })
+  const [session, settings] = await Promise.all([
+    WhatsappSession.findOne({ sessionName: env.WHATSAPP_SESSION }),
+    getSettings(),
+  ])
   return {
     status: wa.status === 'ready' ? 'ready' : session?.status ?? 'disabled',
     qrDataUrl: session?.qrDataUrl,
@@ -537,7 +540,10 @@ export async function whatsappStatus() {
     lastConnectedAt: session?.lastConnectedAt,
     lastError: session?.lastError,
     info: session?.info,
+    // `enabled` is the server's capability (ENABLE_WHATSAPP); the school may
+    // still have the channel switched on in Settings for another host.
     enabled: whatsappEnabled,
+    settingsEnabled: settings.comms.whatsappEnabled,
     moduleInitialized: initializedModule,
   }
 }
