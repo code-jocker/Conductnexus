@@ -260,6 +260,8 @@ type GatewaySnapshot = {
 // the queue can decide whether WhatsApp rows may run without a network call.
 let gatewaySnapshot: GatewaySnapshot | null = null
 let gatewayError: string | null = null
+let gatewaySnapshotAt: number | null = null
+const GATEWAY_STATUS_CACHE_TTL_MS = 8_000
 
 async function gatewayRequest<T>(pathname: string, init: RequestInit = {}): Promise<T> {
   const base = env.WHATSAPP_GATEWAY_URL.replace(/\/+$/, '')
@@ -272,7 +274,7 @@ async function gatewayRequest<T>(pathname: string, init: RequestInit = {}): Prom
     },
     // Status is polled every few seconds by the admin UI; keep a dead gateway
     // from stacking slow requests.
-    signal: AbortSignal.timeout(pathname === '/status' ? 4_000 : 20_000),
+    signal: AbortSignal.timeout(pathname === '/status' ? 4_000 : 10_000),
   })
   const payload = (await response.json().catch(() => null)) as (T & { ok?: boolean; error?: string }) | null
   if (!response.ok || payload?.ok === false) {
@@ -282,12 +284,18 @@ async function gatewayRequest<T>(pathname: string, init: RequestInit = {}): Prom
 }
 
 async function refreshGatewaySnapshot(): Promise<GatewaySnapshot | null> {
+  const now = Date.now()
+  if (gatewaySnapshot && gatewaySnapshotAt && now - gatewaySnapshotAt < GATEWAY_STATUS_CACHE_TTL_MS) {
+    return gatewaySnapshot
+  }
   try {
     gatewaySnapshot = await gatewayRequest<GatewaySnapshot>('/status')
     gatewayError = null
+    gatewaySnapshotAt = now
   } catch (err) {
     gatewaySnapshot = null
     gatewayError = err instanceof Error ? err.message : 'WhatsApp gateway is unreachable'
+    gatewaySnapshotAt = now
   }
   return gatewaySnapshot
 }

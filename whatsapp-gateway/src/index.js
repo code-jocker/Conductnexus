@@ -31,8 +31,18 @@ let state = {
   info: null,
 }
 
+let cachedStatus = null
+let cachedStatusAt = 0
+const STATUS_CACHE_TTL_MS = 5_000
+
+function markStale() {
+  cachedStatus = null
+  cachedStatusAt = 0
+}
+
 function setState(patch) {
   state = { ...state, ...patch }
+  markStale()
 }
 
 function errorText(err) {
@@ -87,7 +97,17 @@ async function start(phoneNumber) {
     puppeteer: {
       headless: true,
       ...(CHROME_PATH ? { executablePath: CHROME_PATH } : {}),
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--single-process',
+        '--no-zygote',
+        '--disable-background-timer-throttling',
+      ],
+      defaultNavigationTimeout: 20_000,
     },
   })
 
@@ -205,8 +225,23 @@ app.use((req, res, next) => {
   next()
 })
 
+function currentStatus() {
+  const now = Date.now()
+  if (cachedStatus && now - cachedStatusAt < STATUS_CACHE_TTL_MS) {
+    return cachedStatus
+  }
+  const snapshot = { ...state, now: new Date().toISOString() }
+  cachedStatus = snapshot
+  cachedStatusAt = now
+  return snapshot
+}
+
+app.get('/warm', (_req, res) => {
+  res.json({ ok: true, cached: true, ...currentStatus() })
+})
+
 app.get('/status', (_req, res) => {
-  res.json({ ok: true, ...state })
+  res.json({ ok: true, ...currentStatus() })
 })
 
 app.get('/qr', (_req, res) => {
