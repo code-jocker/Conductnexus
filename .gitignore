@@ -32,3 +32,5 @@ firebase-debug.*.log
 # Editor / scratch
 .kombai/
 .tmp-remote/
+.mongo-data/
+.qoder-tmp/

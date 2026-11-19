@@ -3,6 +3,7 @@ process.env.MONGODB_URI = process.env.TEST_MONGODB_URI ?? 'mongodb://127.0.0.1:2
 process.env.JWT_ACCESS_SECRET = 'test-only-secret-value-0123456789abcdef'
 process.env.CORS_ORIGIN = 'http://localhost:5173'
 process.env.ENABLE_WHATSAPP = 'false'
+process.env.EVIDENCE_ENCRYPTION_KEY = 'test-only-evidence-key-0123456789abcdef'
 process.env.SMTP_HOST = ''
 process.env.ADMIN_EMAIL = ''
 process.env.ADMIN_PASSWORD = ''

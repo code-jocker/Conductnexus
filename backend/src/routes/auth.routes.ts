@@ -25,8 +25,10 @@ import {
   setupStatus,
   twoFactorStatus,
   verifyEmailToken,
+  resendTwoFactorCode,
   verifyTwoFactorChallenge,
   type TokenPair,
+  type TwoFactorChannel,
 } from '../services/auth.service.js'
 import { getSettings, User as UserModel } from '../models/core.js'
 import { firebaseConfigured, smtpConfigured } from '../config/env.js'
@@ -55,6 +57,43 @@ function clientMeta(req: import('express').Request, device: DeviceInput, platfor
     deviceName: device?.deviceName,
     platform: device?.platform ?? platform,
     appVersion: device?.appVersion,
+  }
+}
+
+const channelSchema = z.enum(['email', 'whatsapp']).optional()
+
+/**
+ * The code never leaves the server: clients only learn which channel was used
+ * and a masked destination. `devCode` exists solely so a local checkout with
+ * no mail provider configured can still be signed into.
+ */
+function twoFactorPayload(result: {
+  challenge: string
+  userId: string
+  name: string
+  email: string
+  channel: TwoFactorChannel
+  channels: TwoFactorChannel[]
+  maskedDestination: string
+  delivered: boolean
+  warning?: string
+  devCode?: string
+}) {
+  return {
+    twoFactorRequired: true,
+    challenge: result.challenge,
+    userId: result.userId,
+    name: result.name,
+    email: result.email,
+    channel: result.channel,
+    channels: result.channels,
+    maskedDestination: result.maskedDestination,
+    delivered: result.delivered,
+    warning: result.warning,
+    devCode: result.devCode,
+    message: result.delivered
+      ? `A verification code was sent to ${result.maskedDestination} by ${result.channel === 'whatsapp' ? 'WhatsApp' : 'email'}.`
+      : 'The verification code could not be delivered. Request a code on another channel.',
   }
 }
 
@@ -123,12 +162,14 @@ router.post(
     body: z.object({
       email: z.string().email(),
       password: z.string().min(1),
+      channel: channelSchema,
     }),
   }),
   asyncHandler(async (req, res) => {
     const result = await loginWithPassword({
       email: req.body.email,
       password: req.body.password,
+      channel: req.body.channel,
       ...clientMeta(req, undefined, 'web'),
     })
     if (result.status === 'two_factor_required') {
@@ -138,17 +179,9 @@ router.post(
         action: 'auth.2fa_challenged',
         resourceType: 'User',
         resourceId: result.userId,
+        after: { channel: result.channel, delivered: result.delivered },
       })
-      return ok(res, {
-        twoFactorRequired: true,
-        challenge: result.challenge,
-        email: result.email,
-        delivered: result.delivered,
-        devCode: result.devCode,
-        message: result.delivered
-          ? 'A verification code was sent to your email.'
-          : 'Email delivery is not configured. Use the development code shown in the server response.',
-      })
+      return ok(res, twoFactorPayload(result))
     }
     const { tokens, ctx } = result
     await writeAudit({ req, actor: ctx, action: 'auth.login', resourceType: 'User', resourceId: String(ctx.userId) })
@@ -160,16 +193,29 @@ router.post(
   '/google',
   authLimiter,
   validate({
-    body: z.object({ idToken: z.string().min(20) }),
+    body: z.object({ idToken: z.string().min(20), channel: channelSchema }),
   }),
   asyncHandler(async (req, res) => {
     if (!firebaseConfigured) {
       throw ApiError.badRequest('Google Sign-In is not configured yet. Ask your administrator to set FIREBASE_PROJECT_ID on the server.')
     }
-    const { tokens, ctx, isNew, hasAccess } = await loginWithGoogle({
+    const result = await loginWithGoogle({
       idToken: req.body.idToken,
+      channel: req.body.channel,
       ...clientMeta(req, undefined, 'web'),
     })
+    if (result.status === 'two_factor_required') {
+      await writeAudit({
+        req,
+        actor: { userId: new Types.ObjectId(result.userId), name: result.name },
+        action: 'auth.2fa_challenged',
+        resourceType: 'User',
+        resourceId: result.userId,
+        after: { channel: result.channel, method: 'google', delivered: result.delivered },
+      })
+      return ok(res, twoFactorPayload(result))
+    }
+    const { tokens, ctx, isNew, hasAccess } = result
     await writeAudit({ req, actor: ctx, action: isNew ? 'auth.google_signup' : 'auth.google_login', resourceType: 'User', resourceId: String(ctx.userId) })
     sendTokens(res, tokens, {
       user: ctx.user,
@@ -229,6 +275,7 @@ router.post(
     body: z.object({
       email: z.string().email(),
       password: z.string().min(1),
+      channel: channelSchema,
       device: deviceSchema,
     }),
   }),
@@ -236,6 +283,7 @@ router.post(
     const result = await loginWithPassword({
       email: req.body.email,
       password: req.body.password,
+      channel: req.body.channel,
       ...clientMeta(req, req.body.device, 'android'),
     })
     if (result.status === 'two_factor_required') {
@@ -245,17 +293,9 @@ router.post(
         action: 'auth.native_2fa_challenged',
         resourceType: 'User',
         resourceId: result.userId,
+        after: { channel: result.channel, delivered: result.delivered },
       })
-      return ok(res, {
-        twoFactorRequired: true,
-        challenge: result.challenge,
-        email: result.email,
-        delivered: result.delivered,
-        devCode: result.devCode,
-        message: result.delivered
-          ? 'A verification code was sent to your email.'
-          : 'Email delivery is not configured. Use the development code shown in the server response.',
-      })
+      return ok(res, twoFactorPayload(result))
     }
     const { tokens, ctx } = result
     await writeAudit({ req, actor: ctx, action: 'auth.native_login', resourceType: 'User', resourceId: String(ctx.userId) })
@@ -271,16 +311,29 @@ router.post(
   '/native/google',
   authLimiter,
   validate({
-    body: z.object({ idToken: z.string().min(20), device: deviceSchema }),
+    body: z.object({ idToken: z.string().min(20), channel: channelSchema, device: deviceSchema }),
   }),
   asyncHandler(async (req, res) => {
     if (!firebaseConfigured) {
       throw ApiError.badRequest('Google Sign-In is not configured yet. Ask your administrator to set FIREBASE_PROJECT_ID on the server.')
     }
-    const { tokens, ctx, isNew, hasAccess } = await loginWithGoogle({
+    const result = await loginWithGoogle({
       idToken: req.body.idToken,
+      channel: req.body.channel,
       ...clientMeta(req, req.body.device, 'android'),
     })
+    if (result.status === 'two_factor_required') {
+      await writeAudit({
+        req,
+        actor: { userId: new Types.ObjectId(result.userId), name: result.name },
+        action: 'auth.native_2fa_challenged',
+        resourceType: 'User',
+        resourceId: result.userId,
+        after: { channel: result.channel, method: 'google', delivered: result.delivered },
+      })
+      return ok(res, twoFactorPayload(result))
+    }
+    const { tokens, ctx, isNew, hasAccess } = result
     await writeAudit({
       req,
       actor: ctx,
@@ -377,6 +430,42 @@ router.post(
   }),
 )
 
+router.post(
+  '/2fa/resend',
+  twoFactorLimiter,
+  validate({
+    body: z.object({
+      challenge: z.string().min(20),
+      channel: channelSchema,
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const delivery = await resendTwoFactorCode({
+      challenge: req.body.challenge,
+      channel: req.body.channel,
+    })
+    await writeAudit({
+      req,
+      actor: { userId: new Types.ObjectId(delivery.userId), name: delivery.name },
+      action: 'auth.2fa_resent',
+      resourceType: 'User',
+      resourceId: delivery.userId,
+      after: { channel: delivery.channel, delivered: delivery.delivered },
+    })
+    ok(res, {
+      channel: delivery.channel,
+      channels: delivery.channels,
+      maskedDestination: delivery.maskedDestination,
+      delivered: delivery.delivered,
+      warning: delivery.warning,
+      devCode: delivery.devCode,
+      message: delivery.delivered
+        ? `A new verification code was sent to ${delivery.maskedDestination} by ${delivery.channel === 'whatsapp' ? 'WhatsApp' : 'email'}.`
+        : 'The verification code could not be delivered. Try another channel.',
+    })
+  }),
+)
+
 router.get(
   '/2fa/status',
   authenticate,
@@ -389,17 +478,28 @@ router.post(
   '/2fa/enroll',
   authenticate,
   authLimiter,
-  validate({ body: z.object({ password: z.string().min(1) }) }),
+  validate({ body: z.object({ password: z.string().min(1), channel: channelSchema }) }),
   asyncHandler(async (req, res) => {
     const ctx = actorOf(req)
-    const result = await beginTwoFactorEnrollment(ctx.userId, req.body.password)
-    await writeAudit({ req, actor: ctx, action: 'auth.2fa_enrollment_started', resourceType: 'User', resourceId: String(ctx.userId) })
+    const result = await beginTwoFactorEnrollment(ctx.userId, req.body.password, req.body.channel)
+    await writeAudit({
+      req,
+      actor: ctx,
+      action: 'auth.2fa_enrollment_started',
+      resourceType: 'User',
+      resourceId: String(ctx.userId),
+      after: { channel: result.channel, delivered: result.delivered },
+    })
     ok(res, {
+      channel: result.channel,
+      channels: result.channels,
+      maskedDestination: result.maskedDestination,
       delivered: result.delivered,
+      warning: result.warning,
       devCode: result.devCode,
       message: result.delivered
-        ? 'A verification code was sent to your email.'
-        : 'Email delivery is not configured. Use the development code shown in the server response.',
+        ? `A verification code was sent to ${result.maskedDestination} by ${result.channel === 'whatsapp' ? 'WhatsApp' : 'email'}.`
+        : 'The verification code could not be delivered. Try another channel.',
     })
   }),
 )

@@ -27,19 +27,26 @@ async function unwrap<T>(promise: Promise<{ data: ApiEnvelope<T>; headers: unkno
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
+export type TwoFactorChannel = 'email' | 'whatsapp'
+
 export type TwoFactorChallenge = {
   twoFactorRequired: true
   challenge: string
   email: string
+  name?: string
+  channel: TwoFactorChannel
+  channels: TwoFactorChannel[]
+  maskedDestination: string
   delivered: boolean
+  warning?: string
   devCode?: string
 }
 
 export type NativeLoginResult = SessionPayload | TwoFactorChallenge
 
-export async function nativeLogin(email: string, password: string): Promise<NativeLoginResult> {
+export async function nativeLogin(email: string, password: string, channel?: TwoFactorChannel): Promise<NativeLoginResult> {
   const device = await deviceInfo()
-  const res = await api.post<ApiEnvelope<NativeLoginResult>>('/auth/native/login', { email, password, device })
+  const res = await api.post<ApiEnvelope<NativeLoginResult>>('/auth/native/login', { email, password, channel, device })
   return res.data.data
 }
 
@@ -49,9 +56,19 @@ export async function nativeTwoFactorVerify(challenge: string, code: string): Pr
   return res.data.data
 }
 
-export async function nativeGoogle(idToken: string): Promise<SessionPayload> {
+export async function nativeTwoFactorResend(
+  challenge: string,
+  channel: TwoFactorChannel,
+): Promise<Pick<TwoFactorChallenge, 'channel' | 'channels' | 'maskedDestination' | 'delivered' | 'warning' | 'devCode'>> {
+  const res = await api.post<
+    ApiEnvelope<Pick<TwoFactorChallenge, 'channel' | 'channels' | 'maskedDestination' | 'delivered' | 'warning' | 'devCode'>>
+  >('/auth/2fa/resend', { challenge, channel })
+  return res.data.data
+}
+
+export async function nativeGoogle(idToken: string, channel?: TwoFactorChannel): Promise<NativeLoginResult> {
   const device = await deviceInfo()
-  const res = await api.post<ApiEnvelope<SessionPayload>>('/auth/native/google', { idToken, device })
+  const res = await api.post<ApiEnvelope<NativeLoginResult>>('/auth/native/google', { idToken, channel, device })
   return res.data.data
 }
 

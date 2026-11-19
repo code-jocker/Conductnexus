@@ -319,6 +319,15 @@ export function SettingsPage() {
                   </div>
                   <Toggle checked={form.security.requireEmailVerification} onChange={(v) => setForm({ ...form, security: { ...form.security, requireEmailVerification: v } })} label="Require email verification" />
                 </div>
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-line p-3 dark:border-[#1f2f49] sm:col-span-2">
+                  <div>
+                    <p className="text-sm font-medium">Require two-factor authentication</p>
+                    <p className="text-xs text-slate-500">
+                      Every sign-in needs a 6-digit code. Only enable this after email (SMTP/Gmail) or WhatsApp delivery is configured, otherwise users cannot sign in.
+                    </p>
+                  </div>
+                  <Toggle checked={form.security.requireTwoFactor} onChange={(v) => setForm({ ...form, security: { ...form.security, requireTwoFactor: v } })} label="Require two-factor authentication" />
+                </div>
               </div>
             </Card>
 

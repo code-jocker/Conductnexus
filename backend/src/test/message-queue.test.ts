@@ -8,7 +8,13 @@ import { hashPassword } from '../services/auth.service.js'
 import { seedRbac } from '../services/seed.service.js'
 import { Role, User, UserRole } from '../models/core.js'
 import { MessageQueue } from '../models/communications.js'
-import { deliveryBlockReason, processMessageQueue } from '../services/communication.service.js'
+import {
+  deliveryAnalytics,
+  deliveryBlockReason,
+  processMessageQueue,
+  recordWhatsappReceipt,
+  retryDeadLetters,
+} from '../services/communication.service.js'
 
 /**
  * Message queue delivery state.
@@ -105,5 +111,91 @@ describe('message queue delivery state', () => {
   it('requires notifications.manage to read the queue', async () => {
     const res = await request(app).get('/api/v1/notifications/queue')
     expect(res.status).toBe(401)
+  })
+
+  it('does not let an unavailable WhatsApp session freeze email delivery', async () => {
+    const row = await MessageQueue.create({
+      channel: 'email',
+      to: 'guardian@example.rw',
+      subject: 'Conduct update',
+      body: 'Test body',
+      status: 'queued',
+      attempts: 0,
+      maxAttempts: 3,
+      nextAttemptAt: new Date(Date.now() - 60_000),
+    })
+
+    const result = await processMessageQueue()
+    expect(result.processed).toBe(1)
+
+    const after = await MessageQueue.findById(row._id).lean()
+    // SMTP is unconfigured here, so the honest outcome is a recorded failure —
+    // never a "sent" status and never a permanently stuck "sending" row.
+    expect(after?.status).toBe('dead_letter')
+    expect(after?.attempts).toBe(1)
+    expect(after?.lastError).toBeTruthy()
+  })
+
+  it('records WhatsApp delivery receipts against the queued row', async () => {
+    const row = await MessageQueue.create({
+      channel: 'whatsapp',
+      to: '250793946732',
+      body: 'Test body',
+      status: 'sent',
+      providerMessageId: 'wamid.TEST-RECEIPT',
+      provider: 'whatsapp',
+      attempts: 1,
+      maxAttempts: 3,
+      nextAttemptAt: new Date(),
+    })
+
+    await recordWhatsappReceipt('wamid.TEST-RECEIPT', 3)
+    const delivered = await MessageQueue.findById(row._id).lean()
+    expect(delivered?.ackStatus).toBe('delivered')
+    expect(delivered?.deliveredAt).toBeInstanceOf(Date)
+    expect(delivered?.receipts).toHaveLength(1)
+
+    await recordWhatsappReceipt('wamid.TEST-RECEIPT', 4)
+    const read = await MessageQueue.findById(row._id).lean()
+    expect(read?.ackStatus).toBe('read')
+    expect(read?.readAt).toBeInstanceOf(Date)
+    expect(read?.receipts).toHaveLength(2)
+  })
+
+  it('reports delivery analytics per channel from real rows', async () => {
+    await MessageQueue.create([
+      { channel: 'whatsapp', to: '250793946732', body: 'a', status: 'sent', attempts: 1, maxAttempts: 3, nextAttemptAt: new Date() },
+      { channel: 'email', to: 'guardian@example.rw', body: 'b', status: 'dead_letter', attempts: 3, maxAttempts: 3, nextAttemptAt: new Date(), lastError: 'SMTP unavailable' },
+      { channel: 'sms', to: '250788000000', body: 'c', status: 'queued', attempts: 0, maxAttempts: 3, nextAttemptAt: new Date() },
+    ])
+
+    const analytics = await deliveryAnalytics(7)
+    expect(analytics.totals.sent).toBe(1)
+    expect(analytics.totals.dead_letter).toBe(1)
+    expect(analytics.byChannel.whatsapp.sent).toBe(1)
+    expect(analytics.byChannel.email.dead_letter).toBe(1)
+    expect(analytics.pendingNow).toBe(1)
+    expect(analytics.topFailureReasons[0]).toEqual({ reason: 'SMTP unavailable', count: 1 })
+  })
+
+  it('requeues dead letters in bulk', async () => {
+    const row = await MessageQueue.create({
+      channel: 'whatsapp',
+      to: '250793946732',
+      body: 'Retry me',
+      status: 'dead_letter',
+      attempts: 3,
+      maxAttempts: 3,
+      nextAttemptAt: new Date(),
+      lastError: 'WhatsApp is not connected',
+    })
+
+    const result = await retryDeadLetters()
+    expect(result.retried).toBe(1)
+    expect(result.byChannel.whatsapp).toBe(1)
+
+    const after = await MessageQueue.findById(row._id).lean()
+    expect(after?.status).toBe('queued')
+    expect(after?.attempts).toBe(0)
   })
 })

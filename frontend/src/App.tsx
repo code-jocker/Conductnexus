@@ -20,6 +20,10 @@ const StudentsPage = lazy(() => import('./pages/Students').then((m) => ({ defaul
 const StudentProfilePage = lazy(() => import('./pages/StudentProfile').then((m) => ({ default: m.StudentProfilePage })))
 const PromotionsPage = lazy(() => import('./pages/Promotions').then((m) => ({ default: m.PromotionsPage })))
 const IncidentsPage = lazy(() => import('./pages/Incidents').then((m) => ({ default: m.IncidentsPage })))
+const AttendancePage = lazy(() => import('./pages/Attendance').then((m) => ({ default: m.AttendancePage })))
+const BoardingPage = lazy(() => import('./pages/Boarding').then((m) => ({ default: m.BoardingPage })))
+const WelfarePage = lazy(() => import('./pages/Welfare').then((m) => ({ default: m.WelfarePage })))
+const BulkDisciplinePage = lazy(() => import('./pages/BulkDiscipline').then((m) => ({ default: m.BulkDisciplinePage })))
 const IncidentNewPage = lazy(() => import('./pages/IncidentNew').then((m) => ({ default: m.IncidentNewPage })))
 const IncidentDetailPage = lazy(() => import('./pages/IncidentDetail').then((m) => ({ default: m.IncidentDetailPage })))
 const ApprovalsPage = lazy(() => import('./pages/Approvals').then((m) => ({ default: m.ApprovalsPage })))
@@ -121,8 +125,12 @@ export function App() {
                     <Route path="/students" element={<RequirePermission permission="students.view"><StudentsPage /></RequirePermission>} />
                     <Route path="/students/:id" element={<RequirePermission permission="students.view"><StudentProfilePage /></RequirePermission>} />
                     <Route path="/promotions" element={<RequirePermission permission="students.view"><PromotionsPage /></RequirePermission>} />
+                    <Route path="/attendance" element={<RequirePermission permission="attendance.view"><AttendancePage /></RequirePermission>} />
+                    <Route path="/boarding" element={<RequirePermission permission="boarding.view"><BoardingPage /></RequirePermission>} />
+                    <Route path="/welfare" element={<RequirePermission permission={['welfare.view', 'welfare.refer', 'welfare.records.view', 'detention.view']}><WelfarePage /></RequirePermission>} />
                     <Route path="/incidents" element={<RequirePermission permission="incidents.view"><IncidentsPage /></RequirePermission>} />
                     <Route path="/incidents/new" element={<RequirePermission permission="incidents.create"><IncidentNewPage /></RequirePermission>} />
+                    <Route path="/discipline/bulk" element={<RequirePermission permission="marks.view"><BulkDisciplinePage /></RequirePermission>} />
                     <Route path="/incidents/:id" element={<RequirePermission permission="incidents.view"><IncidentDetailPage /></RequirePermission>} />
                     <Route path="/incidents/:id/evidence" element={<RequirePermission permission="evidence.view"><EvidenceCasePage /></RequirePermission>} />
                     <Route path="/approvals" element={<ApprovalsPage />} />

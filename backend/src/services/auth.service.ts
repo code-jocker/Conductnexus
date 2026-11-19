@@ -9,6 +9,7 @@ import { addDays, addMinutes, normalizeRwandaPhone, randomCode, randomToken, sha
 import { getUserContext, invalidateUserAccess, type AuthContext } from './rbac.service.js'
 import { clearSessionCache } from './session.service.js'
 import { resetEmail, sendMail, twoFactorEmail, verificationEmail } from './email.service.js'
+import { sendWhatsAppText } from './communication.service.js'
 import { logger } from '../shared/logger.js'
 
 export const REFRESH_COOKIE = 'cn_refresh'
@@ -91,17 +92,40 @@ export function verifyAccessToken(token: string): AccessClaims {
 export const TWO_FACTOR_TTL_MINUTES = 10
 export const TWO_FACTOR_MAX_ATTEMPTS = 5
 
+export type TwoFactorChannel = 'email' | 'whatsapp'
+
+export type TwoFactorDelivery = {
+  channel: TwoFactorChannel
+  channels: TwoFactorChannel[]
+  maskedDestination: string
+  delivered: boolean
+  warning?: string
+  devCode?: string
+}
+
 export type PasswordLoginResult =
   | { status: 'authenticated'; tokens: TokenPair; ctx: AuthContext }
-  | {
+  | ({
       status: 'two_factor_required'
       challenge: string
       userId: string
       name: string
       email: string
-      delivered: boolean
-      devCode?: string
-    }
+      isNew?: boolean
+      hasAccess?: boolean
+    } & TwoFactorDelivery)
+
+export type GoogleLoginResult =
+  | { status: 'authenticated'; tokens: TokenPair; ctx: AuthContext; isNew: boolean; hasAccess: boolean }
+  | ({
+      status: 'two_factor_required'
+      challenge: string
+      userId: string
+      name: string
+      email: string
+      isNew: boolean
+      hasAccess: boolean
+    } & TwoFactorDelivery)
 
 function signTwoFactorChallenge(userId: Types.ObjectId | string): string {
   return jwt.sign({ sub: String(userId), typ: '2fa' }, env.JWT_ACCESS_SECRET, { expiresIn: `${TWO_FACTOR_TTL_MINUTES}m` })
@@ -117,21 +141,83 @@ function userIdFromTwoFactorChallenge(token: string): string {
   }
 }
 
-async function issueTwoFactorChallenge(user: IUser): Promise<{ delivered: boolean; devCode?: string }> {
+function hashEquals(provided: string, stored: string): boolean {
+  const a = Buffer.from(provided, 'hex')
+  const b = Buffer.from(stored, 'hex')
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b)
+}
+
+function maskEmail(email: string): string {
+  const [name = '', domain = ''] = email.split('@')
+  const visible = name.slice(0, 2)
+  return `${visible}${'*'.repeat(Math.max(2, name.length - visible.length))}@${domain}`
+}
+
+function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '')
+  return `${digits.slice(0, 3)}•••${digits.slice(-3)}`
+}
+
+function twoFactorChannels(user: IUser): TwoFactorChannel[] {
+  return ['email', ...(user.phone ? (['whatsapp'] as const) : [])]
+}
+
+async function deliverTwoFactorCode(
+  user: IUser,
+  code: string,
+  channel: TwoFactorChannel,
+): Promise<{ received: boolean; warning?: string }> {
+  if (channel === 'whatsapp') {
+    if (!user.phone) return { received: false, warning: 'No mobile number is registered on this account. Use email instead.' }
+    const result = await sendWhatsAppText(
+      user.phone,
+      `ConductNexus sign-in code: ${code}\nThis code expires in ${TWO_FACTOR_TTL_MINUTES} minutes. Never share it. If you did not try to sign in, change your password immediately.`,
+    )
+    return {
+      received: result.ok,
+      warning: result.ok ? undefined : `WhatsApp could not deliver the code (${result.error}). Request a code by email instead.`,
+    }
+  }
+  const result = await sendMail({ to: user.email, ...twoFactorEmail(user.name, code) })
+  return {
+    received: result.delivered,
+    warning: result.delivered
+      ? undefined
+      : isProd
+        ? 'Email delivery is currently unavailable. Contact your school administrator.'
+        : 'Email delivery is not configured. Use the development code shown in the server response.',
+  }
+}
+
+async function issueTwoFactorChallenge(
+  user: IUser,
+  channel: TwoFactorChannel = 'email',
+): Promise<TwoFactorDelivery> {
+  const channels = twoFactorChannels(user)
+  if (!channels.includes(channel)) {
+    throw ApiError.badRequest('That verification channel is not available for this account.')
+  }
   const code = randomCode(6)
   user.twoFactorCodeHash = sha256(`${user._id}:${code}`)
   user.twoFactorExpires = addMinutes(new Date(), TWO_FACTOR_TTL_MINUTES)
   user.twoFactorAttempts = 0
   user.twoFactorCodeSentAt = new Date()
   await user.save()
-  const mail = twoFactorEmail(user.name, code)
-  const result = await sendMail({ to: user.email, ...mail })
-  return { delivered: result.delivered, devCode: !isProd && !smtpConfigured ? code : undefined }
+  const delivery = await deliverTwoFactorCode(user, code, channel)
+  return {
+    channel,
+    channels,
+    maskedDestination: channel === 'whatsapp' ? maskPhone(user.phone ?? '') : maskEmail(user.email),
+    delivered: delivery.received,
+    warning: delivery.warning,
+    devCode: !isProd && !delivery.received ? code : undefined,
+  }
 }
 
 export async function loginWithPassword(input: {
   email: string
   password: string
+  channel?: TwoFactorChannel
 } & ClientMeta): Promise<PasswordLoginResult> {
   const settings = await getSettings()
   const email = input.email.trim().toLowerCase()
@@ -158,9 +244,12 @@ export async function loginWithPassword(input: {
   user.lockUntil = undefined
   await user.save()
 
-  if (user.twoFactorEnabled) {
+  // Two-factor is always applied when the account opted in, and school-wide
+  // when settings.security.requireTwoFactor is on. A challenge never issues
+  // tokens, so a stolen password alone cannot start a session.
+  if (user.twoFactorEnabled || settings.security.requireTwoFactor) {
     const challenge = signTwoFactorChallenge(user._id)
-    const delivery = await issueTwoFactorChallenge(user)
+    const delivery = await issueTwoFactorChallenge(user, input.channel ?? 'email')
     return {
       status: 'two_factor_required',
       challenge,
@@ -183,9 +272,13 @@ export async function verifyTwoFactorChallenge(input: {
   code: string
 } & ClientMeta): Promise<{ tokens: TokenPair; ctx: AuthContext }> {
   const userId = userIdFromTwoFactorChallenge(input.challenge)
+  const settings = await getSettings()
   const user = await User.findById(userId).select('+twoFactorCodeHash +twoFactorExpires +twoFactorAttempts')
   if (!user) throw ApiError.unauthorized('Account not found')
-  if (!user.twoFactorEnabled) throw ApiError.badRequest('Two-factor authentication is not enabled for this account.')
+  if (user.status !== 'active') throw ApiError.forbidden('This account is not active.')
+  if (!user.twoFactorEnabled && !settings.security.requireTwoFactor) {
+    throw ApiError.badRequest('Two-factor authentication is not enabled for this account.')
+  }
   if (!user.twoFactorCodeHash || !user.twoFactorExpires) {
     throw ApiError.unauthorized('No verification code is pending. Please sign in again.')
   }
@@ -200,7 +293,7 @@ export async function verifyTwoFactorChallenge(input: {
     throw ApiError.tooMany('Too many incorrect verification codes. Please sign in again.')
   }
   const provided = sha256(`${user._id}:${input.code.trim()}`)
-  if (provided !== user.twoFactorCodeHash) {
+  if (!hashEquals(provided, user.twoFactorCodeHash)) {
     user.twoFactorAttempts = (user.twoFactorAttempts ?? 0) + 1
     await user.save()
     throw ApiError.unauthorized('The verification code is incorrect.')
@@ -216,22 +309,63 @@ export async function verifyTwoFactorChallenge(input: {
   return { tokens, ctx }
 }
 
-export async function twoFactorStatus(userId: string | Types.ObjectId): Promise<{ enabled: boolean; mandatory: boolean }> {
+/**
+ * Re-issues a sign-in code on the channel the person chooses.
+ *
+ * The challenge token proves the password was already accepted, and the cooldown
+ * stops a logged-in attacker from turning the endpoint into an SMS/email pump.
+ */
+export async function resendTwoFactorCode(input: {
+  challenge: string
+  channel?: TwoFactorChannel
+}): Promise<TwoFactorDelivery & { userId: string; name: string }> {
+  const userId = userIdFromTwoFactorChallenge(input.challenge)
+  const settings = await getSettings()
+  const user = await User.findById(userId).select('+twoFactorCodeSentAt')
+  if (!user) throw ApiError.unauthorized('Account not found')
+  if (user.status !== 'active') throw ApiError.forbidden('This account is not active.')
+  if (!user.twoFactorEnabled && !settings.security.requireTwoFactor) {
+    throw ApiError.badRequest('Two-factor authentication is not enabled for this account.')
+  }
+  const sentAt = (user as IUser & { twoFactorCodeSentAt?: Date }).twoFactorCodeSentAt
+  if (sentAt) {
+    const waitMs = sentAt.getTime() + env.TWO_FACTOR_RESEND_SECONDS * 1000 - Date.now()
+    if (waitMs > 0) {
+      throw ApiError.tooMany(`Please wait ${Math.ceil(waitMs / 1000)} seconds before requesting another code.`)
+    }
+  }
+  return { ...(await issueTwoFactorChallenge(user, input.channel ?? 'email')), userId: String(user._id), name: user.name }
+}
+
+export async function twoFactorStatus(userId: string | Types.ObjectId): Promise<{
+  enabled: boolean
+  mandatory: boolean
+  channels: TwoFactorChannel[]
+  email: string
+  phone?: string
+}> {
   const [user, settings] = await Promise.all([User.findById(userId), getSettings()])
   if (!user) throw ApiError.notFound('Account not found')
-  return { enabled: Boolean(user.twoFactorEnabled), mandatory: Boolean(settings.security.requireTwoFactor) }
+  return {
+    enabled: Boolean(user.twoFactorEnabled),
+    mandatory: Boolean(settings.security.requireTwoFactor),
+    channels: twoFactorChannels(user),
+    email: user.email,
+    phone: user.phone,
+  }
 }
 
 export async function beginTwoFactorEnrollment(
   userId: string | Types.ObjectId,
   password: string,
-): Promise<{ delivered: boolean; devCode?: string }> {
+  channel: TwoFactorChannel = 'email',
+): Promise<TwoFactorDelivery> {
   const user = await User.findById(userId).select('+passwordHash')
   if (!user) throw ApiError.notFound('Account not found')
   if (user.twoFactorEnabled) throw ApiError.badRequest('Two-factor authentication is already enabled.')
   if (!user.passwordHash) throw ApiError.badRequest('Set a password before enabling two-factor authentication.')
   if (!(await verifyPassword(password, user.passwordHash))) throw ApiError.badRequest('Password is incorrect')
-  return issueTwoFactorChallenge(user)
+  return issueTwoFactorChallenge(user, channel)
 }
 
 export async function confirmTwoFactorEnrollment(userId: string | Types.ObjectId, code: string): Promise<void> {
@@ -251,7 +385,7 @@ export async function confirmTwoFactorEnrollment(userId: string | Types.ObjectId
     throw ApiError.tooMany('Too many incorrect verification codes. Start the two-factor setup again.')
   }
   const provided = sha256(`${user._id}:${code.trim()}`)
-  if (provided !== user.twoFactorCodeHash) {
+  if (!hashEquals(provided, user.twoFactorCodeHash)) {
     user.twoFactorAttempts = (user.twoFactorAttempts ?? 0) + 1
     await user.save()
     throw ApiError.unauthorized('The verification code is incorrect.')
@@ -334,8 +468,10 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<GoogleIden
 
 export async function loginWithGoogle(input: {
   idToken: string
-} & ClientMeta): Promise<{ tokens: TokenPair; ctx: AuthContext; isNew: boolean; hasAccess: boolean }> {
+  channel?: TwoFactorChannel
+} & ClientMeta): Promise<GoogleLoginResult> {
   const identity = await verifyFirebaseIdToken(input.idToken)
+  const settings = await getSettings()
   let user = await User.findOne({
     $or: [{ googleUid: identity.uid }, { email: identity.email }],
   })
@@ -347,7 +483,6 @@ export async function loginWithGoogle(input: {
     user.emailVerified = true
     user.authProvider = user.passwordHash ? 'both' : 'google'
     if (identity.picture && !user.avatarUrl) user.avatarUrl = identity.picture
-    user.lastLoginAt = new Date()
     await user.save()
   } else {
     isNew = true
@@ -359,13 +494,31 @@ export async function loginWithGoogle(input: {
       emailVerified: true,
       status: 'active',
       avatarUrl: identity.picture,
-      lastLoginAt: new Date(),
     })
   }
 
+  // Google proves the identity, but an account (or school policy) that requires
+  // two-factor still has to prove possession of the enrolled channel.
+  if (user.twoFactorEnabled || settings.security.requireTwoFactor) {
+    const challenge = signTwoFactorChallenge(user._id)
+    const delivery = await issueTwoFactorChallenge(user, input.channel ?? 'email')
+    return {
+      status: 'two_factor_required',
+      challenge,
+      userId: String(user._id),
+      name: user.name,
+      email: user.email,
+      isNew,
+      hasAccess: (await getUserContext(user._id)).roles.length > 0,
+      ...delivery,
+    }
+  }
+
+  user.lastLoginAt = new Date()
+  await user.save()
   const tokens = await issueTokens(user, input)
   const ctx = await getUserContext(user._id)
-  return { tokens, ctx, isNew, hasAccess: ctx.roles.length > 0 }
+  return { status: 'authenticated', tokens, ctx, isNew, hasAccess: ctx.roles.length > 0 }
 }
 
 export async function rotateRefreshToken(input: {

@@ -5,6 +5,8 @@ import { get, post, setToken, getToken } from './api'
 import { signInWithGoogle } from './firebase'
 import type { Me } from './types'
 
+export type TwoFactorChannel = 'email' | 'whatsapp'
+
 type LoginResponse = {
   accessToken?: string
   user?: Me['user']
@@ -13,21 +15,62 @@ type LoginResponse = {
   twoFactorRequired?: boolean
   challenge?: string
   email?: string
+  name?: string
+  channel?: TwoFactorChannel
+  channels?: TwoFactorChannel[]
+  maskedDestination?: string
   delivered?: boolean
+  warning?: string
+  devCode?: string
+  isNew?: boolean
+  hasAccess?: boolean
+  message?: string
+}
+
+export type TwoFactorChallenge = {
+  challenge: string
+  email: string
+  name?: string
+  channel: TwoFactorChannel
+  channels: TwoFactorChannel[]
+  maskedDestination: string
+  delivered: boolean
+  warning?: string
   devCode?: string
 }
 
+export type TwoFactorDeliveryInfo = Omit<TwoFactorChallenge, 'challenge' | 'email' | 'name'>
+
 export type LoginResult =
   | { status: 'authenticated'; me: Me }
-  | { status: 'two_factor_required'; challenge: string; email: string; delivered: boolean; devCode?: string }
+  | ({ status: 'two_factor_required' } & TwoFactorChallenge)
+
+export type GoogleLoginResult =
+  | { status: 'authenticated'; me: Me; hasAccess: boolean; message?: string }
+  | ({ status: 'two_factor_required' } & TwoFactorChallenge)
+
+function toChallenge(data: LoginResponse, fallbackEmail: string): TwoFactorChallenge {
+  return {
+    challenge: data.challenge ?? '',
+    email: data.email ?? fallbackEmail,
+    name: data.name,
+    channel: data.channel ?? 'email',
+    channels: data.channels?.length ? data.channels : ['email'],
+    maskedDestination: data.maskedDestination ?? data.email ?? fallbackEmail,
+    delivered: Boolean(data.delivered),
+    warning: data.warning,
+    devCode: data.devCode,
+  }
+}
 
 type AuthValue = {
   me: Me | null
   loading: boolean
   socket: Socket | null
-  login: (email: string, password: string) => Promise<LoginResult>
+  login: (email: string, password: string, channel?: TwoFactorChannel) => Promise<LoginResult>
   verifyTwoFactor: (challenge: string, code: string) => Promise<Me>
-  loginWithGoogle: () => Promise<{ me: Me | null; hasAccess: boolean; message?: string }>
+  resendTwoFactor: (challenge: string, channel: TwoFactorChannel) => Promise<TwoFactorDeliveryInfo>
+  loginWithGoogle: (channel?: TwoFactorChannel) => Promise<GoogleLoginResult>
   logout: () => Promise<void>
   refreshMe: () => Promise<void>
   has: (permission: string | string[]) => boolean
@@ -78,16 +121,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [me])
 
   const login = useCallback(
-    async (email: string, password: string): Promise<LoginResult> => {
-      const data = await post<LoginResponse>('/auth/login', { email, password })
+    async (email: string, password: string, channel?: TwoFactorChannel): Promise<LoginResult> => {
+      const data = await post<LoginResponse>('/auth/login', { email, password, channel })
       if (data.twoFactorRequired && data.challenge) {
-        return {
-          status: 'two_factor_required',
-          challenge: data.challenge,
-          email: data.email ?? email,
-          delivered: Boolean(data.delivered),
-          devCode: data.devCode,
-        }
+        return { status: 'two_factor_required', ...toChallenge(data, email) }
       }
       if (!data.accessToken || !data.user) throw new Error('Sign-in failed. Please try again.')
       setToken(data.accessToken)
@@ -114,26 +151,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [queryClient],
   )
 
-  const loginWithGoogle = useCallback(async () => {
-    const idToken = await signInWithGoogle()
+  const resendTwoFactor = useCallback(async (challenge: string, channel: TwoFactorChannel) => {
     const data = await post<{
-      accessToken?: string
-      user?: Me['user']
-      roles?: string[]
-      permissions?: string[]
-      isNew?: boolean
-      hasAccess?: boolean
-      message?: string
-    }>('/auth/google', { idToken })
-    if (!data.accessToken) {
-      return { me: null, hasAccess: false, message: data.message ?? 'This Google account is not linked to a ConductNexus user.' }
+      channel: TwoFactorChannel
+      channels: TwoFactorChannel[]
+      maskedDestination: string
+      delivered: boolean
+      warning?: string
+      devCode?: string
+    }>('/auth/2fa/resend', { challenge, channel })
+    return {
+      channel: data.channel,
+      channels: data.channels?.length ? data.channels : [data.channel],
+      maskedDestination: data.maskedDestination,
+      delivered: data.delivered,
+      warning: data.warning,
+      devCode: data.devCode,
     }
-    setToken(data.accessToken)
-    const next: Me = { user: data.user!, roles: data.roles ?? [], permissions: data.permissions ?? [] }
-    queryClient.clear()
-    setMe(next)
-    return { me: next, hasAccess: true, message: data.message }
-  }, [queryClient])
+  }, [])
+
+  const loginWithGoogle = useCallback(
+    async (channel?: TwoFactorChannel): Promise<GoogleLoginResult> => {
+      const idToken = await signInWithGoogle()
+      const data = await post<LoginResponse>('/auth/google', { idToken, channel })
+      if (data.twoFactorRequired && data.challenge) {
+        return { status: 'two_factor_required', ...toChallenge(data, data.email ?? '') }
+      }
+      if (!data.accessToken) {
+        throw new Error(data.message ?? 'This Google account is not linked to a ConductNexus user.')
+      }
+      setToken(data.accessToken)
+      const next: Me = { user: data.user!, roles: data.roles ?? [], permissions: data.permissions ?? [] }
+      queryClient.clear()
+      setMe(next)
+      return { status: 'authenticated', me: next, hasAccess: Boolean(data.hasAccess), message: data.message }
+    },
+    [queryClient],
+  )
 
   const logout = useCallback(async () => {
     await post('/auth/logout').catch(() => undefined)
@@ -162,8 +216,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const value = useMemo<AuthValue>(
-    () => ({ me, loading, socket, login, verifyTwoFactor, loginWithGoogle, logout, refreshMe, has, hasRole }),
-    [me, loading, socket, login, verifyTwoFactor, loginWithGoogle, logout, refreshMe, has, hasRole],
+    () => ({ me, loading, socket, login, verifyTwoFactor, resendTwoFactor, loginWithGoogle, logout, refreshMe, has, hasRole }),
+    [me, loading, socket, login, verifyTwoFactor, resendTwoFactor, loginWithGoogle, logout, refreshMe, has, hasRole],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -4,7 +4,7 @@ import { BulkOperation, DisciplineLedger, Offence, type IBulkResultLine } from '
 import { Recognition } from '../models/support.js'
 import { ApiError } from '../shared/errors.js'
 import { writeAudit } from './audit.service.js'
-import { postTransaction } from './ledger.service.js'
+import { postTransaction, termBalances } from './ledger.service.js'
 import { resolveTerm } from './academic.service.js'
 import { visibleStudentQuery, type AuthContext } from './rbac.service.js'
 import { nextRef } from '../shared/refs.js'
@@ -79,13 +79,24 @@ async function resolvePerStudentChange(input: BulkOperationInput) {
 }
 
 export async function previewBulkOperation(ctx: AuthContext, input: BulkOperationInput) {
-  const [students, perStudent] = await Promise.all([resolveStudents(ctx, input), resolvePerStudentChange(input)])
+  const [students, perStudent, term] = await Promise.all([
+    resolveStudents(ctx, input),
+    resolvePerStudentChange(input),
+    resolveTerm(input.termId),
+  ])
   if (!students.length) throw ApiError.badRequest('No active students match this selection')
 
+  // The screen must show the balance of the term being changed, not whatever
+  // the student's live record happens to hold for a different term.
+  const balances = await termBalances(
+    students.map((student) => student._id),
+    term._id,
+  )
   const excluded = new Set((input.excludeStudentIds ?? []).map((id) => String(id)))
   const exclusionReason = input.exclusionReason?.trim() || 'Excluded by operator'
   const lines: BulkPreviewLine[] = students.map((student) => {
-    const currentBalance = student.currentBalance
+    const onTerm = String(student.currentTermId ?? student.termId ?? '') === String(term._id)
+    const currentBalance = balances.get(String(student._id)) ?? (onTerm ? student.currentBalance : 0)
     let skipped = false
     let skipReason: string | undefined
     if (excluded.has(String(student._id))) {
@@ -251,4 +262,127 @@ export async function applyBulkOperation(ctx: AuthContext, input: BulkOperationI
   })
 
   return operation
+}
+
+async function changeForOperation(operation: InstanceType<typeof BulkOperation>): Promise<number> {
+  if (operation.type === 'reward') return Math.min(20, Math.round(operation.points ?? 0))
+  if (!operation.offenceId) throw ApiError.badRequest('This operation has no offence rule to retry')
+  const offence = await Offence.findById(operation.offenceId)
+  if (!offence || offence.deduction <= 0) throw ApiError.badRequest('The offence rule is no longer available')
+  return -offence.deduction
+}
+
+/**
+ * Retries only the lines that failed, against the same term and operation.
+ *
+ * The unique (bulkOperationId, studentId, type) index makes this safe to run
+ * more than once: a student who was already credited is detected and reported
+ * as skipped instead of being changed twice.
+ */
+export async function retryBulkOperation(ctx: AuthContext, id: string, req?: Request) {
+  const operation = await BulkOperation.findById(id)
+  if (!operation) throw ApiError.notFound('Bulk operation not found')
+  if (String(operation.requestedBy) !== String(ctx.userId) && !ctx.permissions.has('incidents.view_all')) {
+    throw ApiError.forbidden('You are not authorized to retry this bulk operation')
+  }
+  if (operation.status === 'applying') throw ApiError.badRequest('This operation is still running')
+  const pending = operation.results.filter((line) => !line.ok && !line.skipped)
+  if (!pending.length) return operation
+
+  const term = await resolveTerm(operation.termId ? String(operation.termId) : undefined)
+  const change = await changeForOperation(operation)
+  const results = operation.results.map((line) => ({ ...line }))
+  let recovered = 0
+  let stillFailed = 0
+
+  for (const line of results) {
+    if (line.ok || line.skipped) continue
+    const studentId = new Types.ObjectId(String(line.studentId))
+    const already = await DisciplineLedger.findOne({
+      bulkOperationId: operation._id,
+      studentId,
+      type: operation.type,
+    })
+    if (already) {
+      line.ok = true
+      line.change = already.change
+      line.newBalance = already.newBalance
+      line.ledgerId = String(already._id)
+      line.error = undefined
+      recovered += 1
+      continue
+    }
+    try {
+      const ledger = await postTransaction({
+        studentId,
+        termId: String(term._id),
+        academicYearId: String(term.academicYearId),
+        type: operation.type,
+        change,
+        reason: operation.reason,
+        actor: { userId: ctx.userId, name: ctx.name, roles: ctx.roles },
+        approvedBy: ctx.userId,
+        bulkOperationId: operation._id,
+      })
+      line.ok = true
+      line.change = ledger.change
+      line.newBalance = ledger.newBalance
+      line.ledgerId = String(ledger._id)
+      line.error = undefined
+      recovered += 1
+      if (operation.type === 'reward') {
+        await Recognition.create({
+          studentId,
+          type: 'reward',
+          category: 'Positive conduct',
+          title: 'Conduct reward',
+          description: operation.reason,
+          points: ledger.change,
+          awardedBy: ctx.userId,
+          termId: term._id,
+        })
+      }
+    } catch (err) {
+      stillFailed += 1
+      line.error = err instanceof Error ? err.message : 'Retry failed'
+    }
+  }
+
+  operation.results = results as never
+  operation.applied += recovered
+  operation.failed = stillFailed
+  operation.status = stillFailed === 0 ? 'completed' : operation.applied === 0 ? 'failed' : 'partial'
+  operation.completedAt = new Date()
+  await operation.save()
+
+  await writeAudit({
+    req,
+    actor: ctx,
+    action: `discipline.bulk_${operation.type}_retried`,
+    resourceType: 'BulkOperation',
+    resourceId: String(operation._id),
+    after: { reference: operation.reference, recovered, stillFailed },
+  })
+  return operation
+}
+
+/** CSV of the execution report an operator can download and file. */
+export function bulkOperationCsv(operation: InstanceType<typeof BulkOperation>): string {
+  const escape = (value: unknown) => {
+    const text = String(value ?? '')
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+  }
+  const header = ['Reference', 'Type', 'Scope', 'Student', 'Outcome', 'Change', 'New balance', 'Ledger', 'Detail']
+  const rows = operation.results.map((line) => [
+    operation.reference,
+    operation.type,
+    operation.scope,
+    line.name,
+    line.ok ? (line.skipped ? 'Skipped' : 'Applied') : 'Failed',
+    line.change ?? '',
+    line.newBalance ?? '',
+    line.ledgerId ?? '',
+    line.ok ? line.skipReason ?? '' : line.error ?? '',
+  ])
+  return [header, ...rows].map((row) => row.map(escape).join(',')).join('\r\n')
 }

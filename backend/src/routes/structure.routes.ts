@@ -5,8 +5,8 @@ import { authenticate, requirePermission } from '../middleware/auth.js'
 import { asyncHandler, created, ok, validate } from '../shared/http.js'
 import { ApiError } from '../shared/errors.js'
 import { AcademicYear, ClassModel, Dormitory, Stream, Student, Term } from '../models/school.js'
-import { DisciplineLedger, Incident } from '../models/discipline.js'
-import { allocateTermForAllStudents } from '../services/ledger.service.js'
+import { DisciplineLedger, Incident, Approval } from '../models/discipline.js'
+import { allocateTermForAllStudents, reconcileLedger } from '../services/ledger.service.js'
 import { writeAudit } from '../services/audit.service.js'
 import { getActiveTerm } from '../services/academic.service.js'
 import { objectId } from './helpers.js'
@@ -275,6 +275,150 @@ router.post(
       after: { averageBalance, students: students.length },
     })
     ok(res, term)
+  }),
+)
+
+// ── Term transition centre ─────────────────────────────────────────────────
+
+router.get(
+  '/terms/:id/transition-preview',
+  requirePermission('terms.manage'),
+  asyncHandler(async (req, res) => {
+    const term = await Term.findById(req.params.id).lean()
+    if (!term) throw ApiError.notFound('Term not found')
+    const [activeStudents, allocated, pendingIncidents, pendingApprovals, reconciliation, nextTerm] = await Promise.all([
+      Student.countDocuments({ status: 'active' }),
+      DisciplineLedger.countDocuments({ termId: term._id, type: 'initial_allocation' }),
+      Incident.countDocuments({ termId: term._id, status: { $in: ['draft', 'submitted', 'under_review', 'escalated'] } }),
+      Approval.countDocuments({ status: 'pending' }),
+      reconcileLedger(String(term._id)),
+      Term.findOne({ academicYearId: term.academicYearId, number: term.number + 1 }).lean(),
+    ])
+    ok(res, {
+      term: { id: String(term._id), name: term.name, number: term.number, isActive: term.isActive, closedAt: term.closedAt ?? null, startingMarks: term.startingMarks },
+      nextTerm: nextTerm ? { id: String(nextTerm._id), name: nextTerm.name, number: nextTerm.number } : null,
+      students: { active: activeStudents, allocated, missingAllocation: Math.max(0, activeStudents - allocated) },
+      pendingIncidents,
+      pendingApprovals,
+      reconciliation: {
+        healthy: reconciliation.healthy,
+        transactionsChecked: reconciliation.transactionsChecked,
+        issues: reconciliation.issues.length,
+        issueDetails: reconciliation.issues.slice(0, 20),
+      },
+      blockers: [
+        ...(reconciliation.issues.length ? [`${reconciliation.issues.length} ledger reconciliation issue(s) need review.`] : []),
+        ...(pendingIncidents ? [`${pendingIncidents} incident(s) are still open in this term.`] : []),
+        ...(pendingApprovals ? [`${pendingApprovals} approval(s) are still pending across the school.`] : []),
+      ],
+    })
+  }),
+)
+
+const openNextTermSchema = z.object({
+  name: z.string().trim().min(2).max(60),
+  startDate: dateField,
+  endDate: dateField,
+  startingMarks: z.number().int().min(0).max(100).optional().default(40),
+  academicYearId: objectId.optional(),
+  closePrevious: z.boolean().optional().default(true),
+  allocate: z.boolean().optional().default(true),
+  confirmIssues: z.boolean().optional().default(false),
+})
+
+router.post(
+  '/terms/:id/open-next',
+  requirePermission('terms.manage'),
+  validate({ body: openNextTermSchema }),
+  asyncHandler(async (req, res) => {
+    const term = await Term.findById(req.params.id)
+    if (!term) throw ApiError.notFound('Term not found')
+    if (term.closedAt) throw ApiError.badRequest('This term is already closed. Open the next term from the active term.')
+    if (!term.isActive) throw ApiError.badRequest('Only the active term can be closed and rolled forward.')
+
+    const start = new Date(req.body.startDate)
+    const end = new Date(req.body.endDate)
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+      throw ApiError.badRequest('The new term end date must be after its start date')
+    }
+
+    const academicYearId = req.body.academicYearId ?? String(term.academicYearId)
+    const year = await AcademicYear.findById(academicYearId)
+    if (!year) throw ApiError.notFound('Academic year not found')
+    const nextNumber = academicYearId === String(term.academicYearId) ? term.number + 1 : 1
+    if (nextNumber > 4) throw ApiError.badRequest('This academic year already has four terms. Create the next academic year first.')
+    if (await Term.exists({ academicYearId, number: nextNumber })) {
+      throw ApiError.conflict('The next term number already exists in that academic year')
+    }
+
+    const reconciliation = await reconcileLedger(String(term._id))
+    if (!reconciliation.healthy && !req.body.confirmIssues) {
+      throw ApiError.conflict(
+        `This term has ${reconciliation.issues.length} ledger reconciliation issue(s). Review them, then confirm the transition explicitly.`,
+      )
+    }
+
+    const nextTerm = await Term.create({
+      academicYearId,
+      name: req.body.name,
+      number: nextNumber,
+      startDate: start,
+      endDate: end,
+      startingMarks: req.body.startingMarks,
+      isActive: false,
+    })
+
+    if (req.body.closePrevious) {
+      term.closedSummary = {
+        closedBy: req.auth!.name,
+        reason: `Rolled forward to ${nextTerm.name}`,
+        ledgerTransactions: reconciliation.transactionsChecked,
+        reconciliationIssues: reconciliation.issues.length,
+      }
+      term.closedAt = new Date()
+      term.isActive = false
+      await term.save()
+    }
+
+    await Term.updateMany({ _id: { $ne: nextTerm._id } }, { $set: { isActive: false } })
+    await AcademicYear.updateMany({ _id: { $ne: year._id } }, { $set: { isActive: false, status: 'planned' } })
+    nextTerm.isActive = true
+    await nextTerm.save()
+    year.isActive = true
+    year.status = 'active'
+    await year.save()
+
+    await Student.updateMany(
+      { status: { $in: ['active', 'suspended'] } },
+      { $set: { academicYearId: year._id, termId: nextTerm._id, currentTermId: nextTerm._id } },
+    )
+    const allocated = req.body.allocate
+      ? await allocateTermForAllStudents(
+          { _id: nextTerm._id, startingMarks: nextTerm.startingMarks, academicYearId: nextTerm.academicYearId },
+          { userId: req.auth!.userId, name: req.auth!.name, roles: req.auth!.roles },
+        )
+      : 0
+
+    await writeAudit({
+      req,
+      actor: req.auth,
+      action: 'term.rolled_forward',
+      resourceType: 'Term',
+      resourceId: String(nextTerm._id),
+      after: {
+        previousTerm: String(term._id),
+        closedPrevious: req.body.closePrevious,
+        startingMarks: nextTerm.startingMarks,
+        allocatedStudents: allocated,
+        reconciliationIssues: reconciliation.issues.length,
+      },
+    })
+    created(res, {
+      term: nextTerm,
+      allocatedStudents: allocated,
+      previousTermClosed: req.body.closePrevious,
+      reconciliationIssues: reconciliation.issues.length,
+    })
   }),
 )
 

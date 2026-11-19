@@ -1,17 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowRight, Eye, EyeOff, KeyRound, Mail, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Eye, EyeOff, KeyRound, Mail, MessageCircle, RotateCw, ShieldCheck } from 'lucide-react'
 import { AuthLayout } from '../../components/layout/AuthLayout'
 import { Alert, Button, Field, Input } from '../../components/ui'
-import { useAuth } from '../../lib/auth'
+import { useAuth, type TwoFactorChallenge, type TwoFactorChannel } from '../../lib/auth'
 import { apiError, get } from '../../lib/api'
 import { firebaseEnabled } from '../../lib/firebase'
 import { useToast } from '../../components/toast'
 
 type SetupStatus = { needsSetup: boolean; schoolName?: string; firebaseConfigured?: boolean }
 
+const CHANNEL_LABEL: Record<TwoFactorChannel, string> = { email: 'Email', whatsapp: 'WhatsApp' }
+const RESEND_SECONDS = 60
+
 export function LoginPage() {
-  const { login, verifyTwoFactor, loginWithGoogle } = useAuth()
+  const { login, verifyTwoFactor, resendTwoFactor, loginWithGoogle } = useAuth()
   const { success, error: toastError, info } = useToast()
   const navigate = useNavigate()
   const location = useLocation()
@@ -20,9 +23,11 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [googleBusy, setGoogleBusy] = useState(false)
+  const [resending, setResending] = useState<TwoFactorChannel | null>(null)
+  const [cooldown, setCooldown] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<SetupStatus | null>(null)
-  const [twoFactor, setTwoFactor] = useState<{ challenge: string; email: string; devCode?: string } | null>(null)
+  const [twoFactor, setTwoFactor] = useState<TwoFactorChallenge | null>(null)
   const [code, setCode] = useState('')
 
   useEffect(() => {
@@ -34,7 +39,23 @@ export function LoginPage() {
       .catch(() => undefined)
   }, [navigate])
 
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const timer = window.setInterval(() => setCooldown((value) => Math.max(0, value - 1)), 1000)
+    return () => window.clearInterval(timer)
+  }, [cooldown])
+
   const from = (location.state as { from?: string } | null)?.from || '/'
+
+  function startChallenge(challenge: TwoFactorChallenge) {
+    setTwoFactor(challenge)
+    setCode(challenge.devCode ?? '')
+    setCooldown(RESEND_SECONDS)
+    if (challenge.warning) info(challenge.warning)
+    else if (challenge.delivered) {
+      info(`A verification code was sent to ${challenge.maskedDestination} by ${CHANNEL_LABEL[challenge.channel]}.`)
+    }
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -43,11 +64,7 @@ export function LoginPage() {
     try {
       const result = await login(email.trim(), password)
       if (result.status === 'two_factor_required') {
-        setTwoFactor({ challenge: result.challenge, email: result.email, devCode: result.devCode })
-        setCode(result.devCode ?? '')
-        if (!result.delivered && result.devCode) {
-          info('Email delivery is not configured. Use the development code shown in the field.')
-        }
+        startChallenge(result)
         return
       }
       const me = result.me
@@ -76,11 +93,32 @@ export function LoginPage() {
     }
   }
 
+  async function onResend(channel: TwoFactorChannel) {
+    if (!twoFactor) return
+    setError(null)
+    setResending(channel)
+    try {
+      const delivery = await resendTwoFactor(twoFactor.challenge, channel)
+      setTwoFactor({ ...twoFactor, ...delivery })
+      setCode(delivery.devCode ?? '')
+      setCooldown(RESEND_SECONDS)
+      if (delivery.warning) info(delivery.warning)
+      else if (delivery.delivered) {
+        success(`A new code was sent to ${delivery.maskedDestination} by ${CHANNEL_LABEL[delivery.channel]}.`)
+      }
+    } catch (err) {
+      setError(apiError(err))
+    } finally {
+      setResending(null)
+    }
+  }
+
   function cancelTwoFactor() {
     setTwoFactor(null)
     setCode('')
     setError(null)
     setPassword('')
+    setCooldown(0)
   }
 
   async function onGoogle() {
@@ -88,12 +126,12 @@ export function LoginPage() {
     setGoogleBusy(true)
     try {
       const result = await loginWithGoogle()
-      if (result.me) {
-        success(`Signed in as ${result.me.user.email}`)
-        navigate(from, { replace: true })
-      } else {
-        info(result.message ?? 'Your Google account is not linked to a school user yet.')
+      if (result.status === 'two_factor_required') {
+        startChallenge(result)
+        return
       }
+      success(result.message ?? `Signed in as ${result.me.user.email}`)
+      navigate(from, { replace: true })
     } catch (err) {
       const message = err instanceof Error && err.message.includes('popup') ? 'Google sign-in was cancelled.' : apiError(err)
       setError(message)
@@ -119,10 +157,20 @@ export function LoginPage() {
         <form onSubmit={onVerify} className="mt-4 space-y-4">
           <div className="flex items-start gap-3 rounded-lg border border-line bg-slate-50 p-3 text-sm text-slate-600 dark:border-[#26374f] dark:bg-[#101d33] dark:text-slate-300">
             <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-brand-600 dark:text-brand-300" />
-            <p>
-              We sent a 6-digit verification code to <span className="font-semibold">{twoFactor.email}</span>. Enter it below to finish signing in.
-            </p>
+            <div className="space-y-1">
+              <p>
+                We sent a 6-digit verification code to{' '}
+                <span className="font-semibold">{twoFactor.maskedDestination}</span> by{' '}
+                {CHANNEL_LABEL[twoFactor.channel]}.
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                This step is required because two-factor authentication protects your account. The code expires in 10 minutes.
+              </p>
+            </div>
           </div>
+
+          {twoFactor.warning && <Alert tone="warning" title="Code delivery needs attention">{twoFactor.warning}</Alert>}
+
           <Field label="Verification code" required>
             <div className="relative">
               <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -142,6 +190,34 @@ export function LoginPage() {
           <Button type="submit" loading={busy} className="w-full" icon={ArrowRight}>
             Verify and sign in
           </Button>
+
+          <div className="rounded-lg border border-line p-3 dark:border-[#26374f]">
+            <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">Didn&apos;t get the code?</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {twoFactor.channels.map((ch) => (
+                <Button
+                  key={ch}
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  loading={resending === ch}
+                  disabled={cooldown > 0 || Boolean(resending)}
+                  icon={ch === 'whatsapp' ? MessageCircle : Mail}
+                  onClick={() => onResend(ch)}
+                >
+                  {resending === ch
+                    ? 'Sending…'
+                    : cooldown > 0
+                      ? `Resend to ${CHANNEL_LABEL[ch]} in ${cooldown}s`
+                      : `Send to ${CHANNEL_LABEL[ch]}`}
+                </Button>
+              ))}
+            </div>
+            {twoFactor.channels.length === 1 && (
+              <p className="mt-2 text-[11px] text-slate-400">Add a mobile number to your profile to receive codes on WhatsApp.</p>
+            )}
+          </div>
+
           <button type="button" onClick={cancelTwoFactor} className="w-full text-center text-xs font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400">
             Use a different account
           </button>

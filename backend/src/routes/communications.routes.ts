@@ -21,11 +21,13 @@ import {
   processMessageQueue,
   purgeNonWhatsappFailures,
   queueParentMessage,
+  deliveryAnalytics,
   deliveryBlockReason,
   queueStatusCounts,
   refreshCommsSettings,
   renderTemplate,
   rerouteStrandedSms,
+  retryDeadLetters,
   retryMessage,
   startWhatsapp,
   stopWhatsapp,
@@ -233,6 +235,36 @@ router.get(
     // A row sitting in "queued" with no reason reads as a broken worker, so the
     // delivery state travels with the page.
     ok(res, items, { ...pagedMeta(total, page, pageSize), delivery })
+  }),
+)
+
+router.get(
+  '/notifications/queue/analytics',
+  requirePermission('notifications.manage'),
+  asyncHandler(async (req, res) => {
+    const days = Number.parseInt(String(req.query.days ?? '7'), 10)
+    ok(res, await deliveryAnalytics(Number.isFinite(days) ? days : 7))
+  }),
+)
+
+router.post(
+  '/notifications/queue/retry-dead-letters',
+  requirePermission('notifications.manage'),
+  asyncHandler(async (req, res) => {
+    await refreshCommsSettings()
+    const channel = ['whatsapp', 'sms', 'email'].includes(String(req.body?.channel))
+      ? String(req.body.channel)
+      : undefined
+    const result = await retryDeadLetters({ channel, limit: Number(req.body?.limit) || undefined })
+    await writeAudit({
+      req,
+      actor: req.auth,
+      action: 'communication.queue_dead_letters_retried',
+      resourceType: 'MessageQueue',
+      resourceId: 'bulk',
+      after: result,
+    })
+    ok(res, result)
   }),
 )
 

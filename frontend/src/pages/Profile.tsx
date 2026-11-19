@@ -1,13 +1,13 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
-import { CheckCircle2, KeyRound, LogOut, MailCheck, MonitorSmartphone, Moon, ShieldCheck, Sun } from 'lucide-react'
+import { CheckCircle2, KeyRound, LogOut, MailCheck, MessageCircle, MonitorSmartphone, Moon, ShieldCheck, Sun } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { useTheme } from '../lib/theme'
 import { useI18n } from '../lib/i18n'
-import { apiError, post } from '../lib/api'
+import { apiError, get, post } from '../lib/api'
 import { initials, titleCase } from '../lib/utils'
-import { Alert, Badge, Button, Card, CardHeader, Field, LoadingBlock, PageHeader, Select, StatusBadge } from '../components/ui'
+import { Alert, Badge, Button, Card, CardHeader, Field, Input, LoadingBlock, PageHeader, Select, StatusBadge } from '../components/ui'
 import { useToast } from '../components/toast'
 
 export function ProfilePage() {
@@ -100,6 +100,7 @@ export function ProfilePage() {
                   Change password
                 </Button>
               </div>
+              <TwoFactorSecurityCard />
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-3 dark:border-[#1f2f49]">
                 <div>
                   <p className="text-sm font-medium">Active sessions</p>
@@ -169,6 +170,199 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
     <div className="flex items-center justify-between gap-3">
       <dt className="text-slate-500 dark:text-slate-400">{label}</dt>
       <dd className="text-right font-medium">{value}</dd>
+    </div>
+  )
+}
+
+type TwoFactorChannel = 'email' | 'whatsapp'
+type TwoFactorStatus = {
+  enabled: boolean
+  mandatory: boolean
+  channels: TwoFactorChannel[]
+  email: string
+  phone?: string
+}
+
+function TwoFactorSecurityCard() {
+  const { success, error: toastError } = useToast()
+  const [status, setStatus] = useState<TwoFactorStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [password, setPassword] = useState('')
+  const [channel, setChannel] = useState<TwoFactorChannel>('email')
+  const [code, setCode] = useState('')
+  const [awaitingCode, setAwaitingCode] = useState(false)
+  const [devCode, setDevCode] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [disabling, setDisabling] = useState(false)
+
+  async function load() {
+    try {
+      const next = await get<TwoFactorStatus>('/auth/2fa/status')
+      setStatus(next)
+      if (!next.channels.includes(channel)) setChannel(next.channels[0] ?? 'email')
+    } catch (err) {
+      toastError(apiError(err))
+    }
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function startEnrollment() {
+    setBusy(true)
+    setNotice(null)
+    try {
+      const result = await post<{
+        channel: TwoFactorChannel
+        channels: TwoFactorChannel[]
+        maskedDestination: string
+        delivered: boolean
+        warning?: string
+        devCode?: string
+      }>('/auth/2fa/enroll', { password, channel })
+      setAwaitingCode(true)
+      setCode(result.devCode ?? '')
+      setDevCode(result.devCode ?? null)
+      setNotice(
+        result.delivered
+          ? `A verification code was sent to ${result.maskedDestination} by ${result.channel === 'whatsapp' ? 'WhatsApp' : 'email'}.`
+          : result.warning ?? 'The code could not be delivered. Try the other channel.',
+      )
+      setPassword('')
+    } catch (err) {
+      toastError(apiError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function confirmEnrollment() {
+    setBusy(true)
+    try {
+      await post('/auth/2fa/enroll/confirm', { code: code.trim() })
+      success('Two-factor authentication is now enabled')
+      setAwaitingCode(false)
+      setCode('')
+      setDevCode(null)
+      setNotice(null)
+      await load()
+    } catch (err) {
+      toastError(apiError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function disable() {
+    if (!window.confirm('Turn off two-factor authentication? Your account will be protected by your password alone.')) return
+    setBusy(true)
+    try {
+      await post('/auth/2fa/disable', { password: password })
+      success('Two-factor authentication is disabled')
+      setDisabling(false)
+      setPassword('')
+      await load()
+    } catch (err) {
+      toastError(apiError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!status) {
+    return (
+      <div className="rounded-lg border border-line p-3 dark:border-[#1f2f49]">
+        <p className="text-sm font-medium">Two-factor authentication</p>
+        <p className="text-xs text-slate-500">Checking your security settings…</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-line p-3 dark:border-[#1f2f49]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="flex items-center gap-2 text-sm font-medium">
+            Two-factor authentication
+            {status.enabled ? <Badge tone="emerald">Enabled</Badge> : status.mandatory ? <Badge tone="amber">Required</Badge> : <Badge tone="slate">Off</Badge>}
+          </p>
+          <p className="text-xs text-slate-500">
+            Every sign-in requires a 6-digit code sent by email{status.phone ? ' or WhatsApp' : ''} after your password.
+          </p>
+        </div>
+        {status.enabled ? (
+          <Button size="sm" variant="secondary" onClick={() => setDisabling((v) => !v)}>
+            {disabling ? 'Cancel' : 'Turn off'}
+          </Button>
+        ) : null}
+      </div>
+
+      {status.mandatory && !status.enabled && (
+        <Alert tone="warning" title="Required by your school">
+          Your administrator requires two-factor authentication. Set it up now to keep signing in.
+        </Alert>
+      )}
+      {notice && <p className="mt-2 text-xs font-medium text-slate-600 dark:text-slate-300">{notice}</p>}
+
+      {status.enabled ? (
+        disabling ? (
+          <div className="mt-3 space-y-2">
+            <Field label="Confirm your password">
+              <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Your password" />
+            </Field>
+            <Button size="sm" variant="danger" loading={busy} onClick={disable}>Turn off two-factor</Button>
+          </div>
+        ) : null
+      ) : awaitingCode ? (
+        <div className="mt-3 space-y-2">
+          <Field label="Enter the 6-digit code" required>
+            <Input
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              className="tracking-[0.4em]"
+              placeholder="000000"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            />
+          </Field>
+          {devCode && <p className="text-xs text-slate-500">Development code: <span className="font-mono font-semibold">{devCode}</span></p>}
+          <div className="flex gap-2">
+            <Button size="sm" loading={busy} onClick={confirmEnrollment} disabled={code.length !== 6}>Confirm and enable</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setAwaitingCode(false); setCode(''); setDevCode(null); setNotice(null) }}>Cancel</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+          <Field label="Confirm your password">
+            <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Your password" />
+          </Field>
+          <Field label="Send codes by">
+            <Select value={channel} onChange={(e) => setChannel(e.target.value as TwoFactorChannel)}>
+              <option value="email">Email</option>
+              {status.channels.includes('whatsapp') && <option value="whatsapp">WhatsApp</option>}
+            </Select>
+          </Field>
+          <div className="sm:col-span-2">
+            <Button
+              size="sm"
+              icon={channel === 'whatsapp' ? MessageCircle : MailCheck}
+              loading={busy}
+              disabled={!password}
+              onClick={startEnrollment}
+            >
+              Set up two-factor
+            </Button>
+            {!status.phone && (
+              <p className="mt-1 text-[11px] text-slate-400">
+                Add a mobile number to your profile to receive codes on WhatsApp.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -207,6 +207,13 @@ export interface IEvidence extends Document {
   reviewedBy?: Types.ObjectId
   reviewedAt?: Date
   reviewNotes?: string
+  encrypted: boolean
+  scanStatus: 'clean' | 'infected' | 'not_scanned' | 'failed'
+  scanDetail?: string
+  retentionUntil?: Date
+  deletedAt?: Date
+  deletedBy?: Types.ObjectId
+  deletionReason?: string
   accessLog: { userId: Types.ObjectId; at: Date; action: string }[]
   createdAt: Date
 }
@@ -228,6 +235,13 @@ const evidenceSchema = new Schema<IEvidence>(
     reviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     reviewedAt: { type: Date },
     reviewNotes: { type: String },
+    encrypted: { type: Boolean, default: false },
+    scanStatus: { type: String, enum: ['clean', 'infected', 'not_scanned', 'failed'], default: 'not_scanned' },
+    scanDetail: { type: String },
+    retentionUntil: { type: Date, index: true },
+    deletedAt: { type: Date, index: true },
+    deletedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    deletionReason: { type: String },
     accessLog: [{ userId: { type: Schema.Types.ObjectId, ref: 'User' }, at: { type: Date, default: Date.now }, action: String }],
   },
   { timestamps: { createdAt: true, updatedAt: false } },

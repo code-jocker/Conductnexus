@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { setAccessToken, setSessionId, onSessionExpired } from '../api/client'
-import { fetchMe, nativeGoogle, nativeLogin, nativeLogout, nativeRefresh, nativeTwoFactorVerify, type TwoFactorChallenge } from '../api/endpoints'
+import { fetchMe, nativeGoogle, nativeLogin, nativeLogout, nativeRefresh, nativeTwoFactorResend, nativeTwoFactorVerify, type TwoFactorChallenge, type TwoFactorChannel } from '../api/endpoints'
 import type { MePayload, SessionPayload, SessionUser } from '../api/types'
 import { getBiometricsEnabled, getRefreshToken, setRefreshToken, clearRefreshToken } from './storage'
 import { biometricsAvailable, unlockWithBiometrics } from './biometrics'
@@ -19,9 +19,10 @@ type AuthContextValue = {
   biometricsSupported: boolean
   isParentOnly: boolean
   has: (permission: string) => boolean
-  signIn: (email: string, password: string) => Promise<TwoFactorChallenge | null>
+  signIn: (email: string, password: string, channel?: TwoFactorChannel) => Promise<TwoFactorChallenge | null>
   verifyTwoFactor: (challenge: string, code: string) => Promise<void>
-  signInWithGoogleToken: (idToken: string) => Promise<void>
+  resendTwoFactor: (challenge: string, channel: TwoFactorChannel) => Promise<Omit<TwoFactorChallenge, 'twoFactorRequired' | 'challenge' | 'email' | 'name'>>
+  signInWithGoogleToken: (idToken: string, channel?: TwoFactorChannel) => Promise<TwoFactorChallenge | null>
   signOut: () => Promise<void>
   unlockWithBiometric: () => Promise<boolean>
   refreshProfile: () => Promise<void>
@@ -136,8 +137,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [status])
 
   const signIn = useCallback(
-    async (email: string, password: string) => {
-      const result = await nativeLogin(email.trim().toLowerCase(), password)
+    async (email: string, password: string, channel?: TwoFactorChannel) => {
+      const result = await nativeLogin(email.trim().toLowerCase(), password, channel)
       if ('challenge' in result) {
         return result
       }
@@ -157,11 +158,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [finishSession, queryClient],
   )
 
+  const resendTwoFactor = useCallback(
+    (challenge: string, channel: TwoFactorChannel) => nativeTwoFactorResend(challenge, channel),
+    [],
+  )
+
   const signInWithGoogleToken = useCallback(
-    async (idToken: string) => {
-      const payload = await nativeGoogle(idToken)
-      await finishSession(payload)
+    async (idToken: string, channel?: TwoFactorChannel) => {
+      const result = await nativeGoogle(idToken, channel)
+      if ('challenge' in result) {
+        return result
+      }
+      await finishSession(result)
       queryClient.clear()
+      return null
     },
     [finishSession, queryClient],
   )
@@ -217,6 +227,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       has,
       signIn,
       verifyTwoFactor,
+      resendTwoFactor,
       signInWithGoogleToken,
       signOut,
       unlockWithBiometric,
@@ -234,6 +245,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       has,
       signIn,
       verifyTwoFactor,
+      resendTwoFactor,
       signInWithGoogleToken,
       signOut,
       unlockWithBiometric,

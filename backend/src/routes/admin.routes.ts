@@ -5,6 +5,7 @@ import { authenticate, requirePermission } from '../middleware/auth.js'
 import { asyncHandler, ok, parsePagination, pagedMeta, queryOf } from '../shared/http.js'
 import { ApiError } from '../shared/errors.js'
 import { getSettings } from '../models/core.js'
+import { smtpConfigured, whatsappEnabled } from '../config/env.js'
 import { AccessLog, AuditLog, BackupRecord, DataBreach, DataRequest, SyncLog } from '../models/governance.js'
 import { nextRef } from '../shared/refs.js'
 import { writeAudit } from '../services/audit.service.js'
@@ -88,6 +89,7 @@ const settingsPatchSchema = z
         lockoutMinutes: z.number().int().min(1).max(240).optional(),
         sessionDays: z.number().int().min(1).max(90).optional(),
         requireEmailVerification: z.boolean().optional(),
+        requireTwoFactor: z.boolean().optional(),
       })
       .optional(),
   })
@@ -108,6 +110,13 @@ adminRouter.patch(
   requirePermission('settings.manage'),
   asyncHandler(async (req, res) => {
     const patch = settingsPatchSchema.parse(req.body)
+    // A school-wide 2FA requirement with no way to deliver codes would lock
+    // every user out at the next sign-in, so refuse the setting instead.
+    if (patch.security?.requireTwoFactor === true && !smtpConfigured && !whatsappEnabled) {
+      throw ApiError.badRequest(
+        'Configure email (SMTP or Gmail OAuth2) or WhatsApp before requiring two-factor authentication, otherwise users cannot receive sign-in codes.',
+      )
+    }
     const settings = await getSettings()
     const before = settings.toObject()
     for (const [group, value] of Object.entries(patch)) {

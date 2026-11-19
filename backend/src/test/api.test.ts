@@ -840,6 +840,43 @@ describe('email two-factor authentication', () => {
     expect(me.body.data.user.email).toBe(email)
   })
 
+  it('reports the delivery channel and masks the destination', async () => {
+    const res = await request(app).post('/api/v1/auth/login').set(freshIp()).send({ email, password: PASSWORD })
+    expect(res.status).toBe(200)
+    expect(res.body.data.channel).toBe('email')
+    expect(res.body.data.channels).toContain('email')
+    expect(res.body.data.maskedDestination).toContain('***')
+    expect(res.body.data.maskedDestination).not.toBe(email)
+    expect(res.body.data.maskedDestination.endsWith('@test.rw')).toBe(true)
+  })
+
+  it('refuses WhatsApp delivery when no mobile number is registered', async () => {
+    const res = await request(app)
+      .post('/api/v1/auth/login')
+      .set(freshIp())
+      .send({ email, password: PASSWORD, channel: 'whatsapp' })
+    expect(res.status).toBe(400)
+    expect(String(res.body.error?.message ?? res.body.message)).toMatch(/channel/i)
+  })
+
+  it('rate-limits immediate code resends', async () => {
+    const { challenge } = await loginExpectChallenge()
+    const tooSoon = await request(app)
+      .post('/api/v1/auth/2fa/resend')
+      .set(freshIp())
+      .send({ challenge, channel: 'email' })
+    expect(tooSoon.status).toBe(429)
+    expect(String(tooSoon.body.error?.message ?? tooSoon.body.message)).toMatch(/wait/i)
+  })
+
+  it('rejects a resend for an invalid challenge', async () => {
+    const res = await request(app)
+      .post('/api/v1/auth/2fa/resend')
+      .set(freshIp())
+      .send({ challenge: 'not-a-real-challenge-token', channel: 'email' })
+    expect(res.status).toBe(401)
+  })
+
   it('locks a challenge after too many incorrect codes', async () => {
     const ip = freshIp()
     const { challenge, devCode } = await loginExpectChallenge()
@@ -882,14 +919,14 @@ describe('parent messaging, Kinyarwanda templates and portal link', () => {
 })
 
 describe('bilingual template library', () => {
-  it('ships 30 template types as 60 language versions', async () => {
-    // 21 notification types Ã— 2 languages, plus 9 official letter types Ã— 2.
-    expect(NOTIFICATION_TEMPLATE_LIBRARY.length).toBe(21)
+  it('ships 35 template types as 70 language versions', async () => {
+    // 26 notification types × 2 languages, plus 9 official letter types × 2.
+    expect(NOTIFICATION_TEMPLATE_LIBRARY.length).toBe(26)
     expect(LETTER_TEMPLATE_LIBRARY.length).toBe(9)
-    expect(NOTIFICATION_TEMPLATE_LIBRARY.length + LETTER_TEMPLATE_LIBRARY.length).toBe(30)
+    expect(NOTIFICATION_TEMPLATE_LIBRARY.length + LETTER_TEMPLATE_LIBRARY.length).toBe(35)
 
     const notificationRows = await NotificationTemplate.countDocuments()
-    expect(notificationRows).toBe(42)
+    expect(notificationRows).toBe(52)
     const letterRows = await LetterTemplate.countDocuments()
     expect(letterRows).toBe(9)
   })

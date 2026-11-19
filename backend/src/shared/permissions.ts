@@ -48,6 +48,31 @@ export const PERMISSIONS: PermissionDef[] = [
   p('academic_years.manage', 'Manage academic years', 'School'),
   p('terms.manage', 'Manage terms', 'School'),
 
+  // Attendance
+  p('attendance.view', 'View attendance registers', 'Attendance'),
+  p('attendance.record', 'Record attendance', 'Attendance'),
+  p('attendance.correct', 'Request attendance corrections', 'Attendance'),
+  p('attendance.correct.approve', 'Approve attendance corrections', 'Attendance'),
+  p('attendance.excuse.review', 'Review absence excuses', 'Attendance'),
+  p('attendance.reports', 'View attendance reports', 'Attendance'),
+
+  // Boarding
+  p('boarding.view', 'View boarding operations', 'Boarding'),
+  p('boarding.record', 'Record boarding movements', 'Boarding'),
+  p('boarding.manage', 'Manage dormitory allocations and permissions', 'Boarding'),
+  p('boarding.escalate', 'Escalate missing students', 'Boarding'),
+
+  // Welfare & counselling
+  p('welfare.view', 'Access the confidential welfare centre', 'Welfare'),
+  p('welfare.view_all', 'View all confidential welfare cases', 'Welfare'),
+  p('welfare.manage', 'Manage counselling, support plans and referrals', 'Welfare'),
+  p('welfare.records.view', 'Read confidential counselling session notes', 'Welfare'),
+  p('welfare.assign', 'Assign confidential welfare cases', 'Welfare'),
+  p('welfare.escalate', 'Escalate welfare cases to safeguarding', 'Welfare'),
+  p('welfare.refer', 'Refer students for welfare support', 'Welfare'),
+  p('detention.view', 'View detention sessions', 'Discipline'),
+  p('detention.manage', 'Schedule and manage detention', 'Discipline'),
+
   // Discipline
   p('incidents.view', 'View permitted incidents', 'Discipline'),
   p('incidents.view_all', 'View all incidents', 'Discipline'),

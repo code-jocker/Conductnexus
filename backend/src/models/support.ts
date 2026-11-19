@@ -39,7 +39,7 @@ export const Intervention = model<IIntervention>('Intervention', interventionSch
 export interface IFollowUp extends Document {
   studentId: Types.ObjectId
   interventionId?: Types.ObjectId
-  type: 'counselling' | 'parent_meeting' | 'behaviour_check' | 'academic' | 'other'
+  type: 'counselling' | 'parent_meeting' | 'behaviour_check' | 'academic' | 'boarding_welfare' | 'other'
   dueDate: Date
   assignedTo: Types.ObjectId
   status: 'pending' | 'completed' | 'overdue' | 'cancelled'
@@ -53,7 +53,7 @@ const followUpSchema = new Schema<IFollowUp>(
   {
     studentId: { type: Schema.Types.ObjectId, ref: 'Student', required: true, index: true },
     interventionId: { type: Schema.Types.ObjectId, ref: 'Intervention' },
-    type: { type: String, enum: ['counselling', 'parent_meeting', 'behaviour_check', 'academic', 'other'], default: 'behaviour_check' },
+    type: { type: String, enum: ['counselling', 'parent_meeting', 'behaviour_check', 'academic', 'boarding_welfare', 'other'], default: 'behaviour_check' },
     dueDate: { type: Date, required: true, index: true },
     assignedTo: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     status: { type: String, enum: ['pending', 'completed', 'overdue', 'cancelled'], default: 'pending', index: true },

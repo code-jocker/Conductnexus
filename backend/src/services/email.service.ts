@@ -1,5 +1,5 @@
 import nodemailer, { type Transporter } from 'nodemailer'
-import { env, smtpConfigured } from '../config/env.js'
+import { env, gmailOAuthConfigured, mailFrom, smtpConfigured } from '../config/env.js'
 import { MailMessage } from '../models/core.js'
 import { logger } from '../shared/logger.js'
 import { escapeHtml } from '../shared/utils.js'
@@ -8,12 +8,23 @@ let transporter: Transporter | null = null
 function getTransporter(): Transporter | null {
   if (!smtpConfigured) return null
   if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: env.SMTP_HOST,
-      port: env.SMTP_PORT,
-      secure: env.SMTP_SECURE,
-      auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
-    })
+    transporter = gmailOAuthConfigured
+      ? nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            type: 'OAuth2',
+            user: env.GMAIL_USER,
+            clientId: env.GMAIL_CLIENT_ID,
+            clientSecret: env.GMAIL_CLIENT_SECRET,
+            refreshToken: env.GMAIL_REFRESH_TOKEN,
+          },
+        })
+      : nodemailer.createTransport({
+          host: env.SMTP_HOST,
+          port: env.SMTP_PORT,
+          secure: env.SMTP_SECURE,
+          auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+        })
   }
   return transporter
 }
@@ -43,7 +54,7 @@ export async function sendMail(input: { to: string; subject: string; html: strin
 
   try {
     await tx.sendMail({
-      from: env.MAIL_FROM,
+      from: mailFrom,
       to: input.to,
       subject: input.subject,
       html: input.html,

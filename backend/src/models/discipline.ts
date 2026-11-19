@@ -238,6 +238,8 @@ export interface IDisciplineLedger extends Document {
   status: 'posted'
   reversalOf?: Types.ObjectId
   auditRef?: string
+  /** Caller-supplied key making a retried write return the original row instead of posting twice. */
+  idempotencyKey?: string
   createdAt: Date
 }
 
@@ -263,6 +265,7 @@ const ledgerSchema = new Schema<IDisciplineLedger>(
     status: { type: String, enum: ['posted'], default: 'posted' },
     reversalOf: { type: Schema.Types.ObjectId, ref: 'DisciplineLedger' },
     auditRef: { type: String },
+    idempotencyKey: { type: String, maxlength: 160 },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 )
@@ -280,6 +283,16 @@ ledgerSchema.index(
 ledgerSchema.index(
   { bulkOperationId: 1, studentId: 1, type: 1 },
   { unique: true, partialFilterExpression: { bulkOperationId: { $type: 'objectId' } } },
+)
+// Client retries must replay the original row instead of posting a second one.
+ledgerSchema.index(
+  { idempotencyKey: 1 },
+  { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } },
+)
+// A reversal is compensative and may only exist once per original entry.
+ledgerSchema.index(
+  { reversalOf: 1 },
+  { unique: true, partialFilterExpression: { reversalOf: { $type: 'objectId' } } },
 )
 ledgerSchema.pre(['updateOne', 'findOneAndUpdate', 'updateMany', 'deleteOne', 'deleteMany'], function (next) {
   next(new Error('Discipline ledger entries are immutable. Create a compensating transaction instead.'))

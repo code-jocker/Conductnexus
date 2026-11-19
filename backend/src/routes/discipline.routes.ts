@@ -21,8 +21,9 @@ import {
 } from '../services/incidents.service.js'
 import { requestAdjustment } from '../services/adjustments.service.js'
 import { decideApproval } from '../services/approvals.service.js'
-import { rewardStudent, reverseTransaction, studentConductSummary, reconcileLedger } from '../services/ledger.service.js'
-import { applyBulkOperation, previewBulkOperation } from '../services/bulk.service.js'
+import { rewardStudent, reverseTransaction, studentConductSummary, reconcileLedger, reconcileAllTerms } from '../services/ledger.service.js'
+import { applyBulkOperation, bulkOperationCsv, previewBulkOperation, retryBulkOperation } from '../services/bulk.service.js'
+import { queueParentMessage } from '../services/communication.service.js'
 import { resolveTerm } from '../services/academic.service.js'
 import { assertStudentAccess } from '../services/rbac.service.js'
 import { writeAudit } from '../services/audit.service.js'
@@ -382,6 +383,10 @@ router.get(
   '/discipline/ledger/reconciliation',
   requirePermission('reports.view'),
   asyncHandler(async (req, res) => {
+    if (String(req.query.all) === 'true') {
+      ok(res, await reconcileAllTerms())
+      return
+    }
     const term = await resolveTerm(req.query.termId as string | undefined)
     ok(res, await reconcileLedger(String(term._id)))
   }),
@@ -493,6 +498,7 @@ const bulkBody = z.object({
   clientReference: z.string().trim().max(80).optional(),
   excludeStudentIds: z.array(objectId).max(500).optional(),
   exclusionReason: z.string().trim().max(400).optional(),
+  notifyParents: z.boolean().optional().default(false),
 })
 
 // Bulk deduct/reward for a whole class, stream, dormitory, the entire school, or
@@ -535,6 +541,32 @@ router.post(
       throw ApiError.forbidden('Missing permission: marks.reward')
     }
     const operation = await applyBulkOperation(req.auth!, req.body as never, req)
+    if (req.body.notifyParents) {
+      const today = new Date().toLocaleDateString('en-RW', { timeZone: 'Africa/Kigali' })
+      const offence = req.body.offenceId ? await Offence.findById(req.body.offenceId).lean() : null
+      const applied = operation.results.filter((line) => line.ok && !line.skipped)
+      // Guardian notifications follow the same consent and approved-template
+      // rules as every other parent message; a failed notice never rolls back
+      // the conduct change that was already posted and audited.
+      await Promise.allSettled(
+        applied.map((line) =>
+          queueParentMessage({
+            studentId: String(line.studentId),
+            templateKey: type === 'deduction' ? 'incident_deduction' : 'positive_behaviour_recognition',
+            extraVars:
+              type === 'deduction'
+                ? {
+                    offenceName: offence?.name ?? req.body.title ?? 'Group conduct deduction',
+                    deduction: Math.abs(line.change ?? 0),
+                    incidentDate: today,
+                  }
+                : { achievement: req.body.title ?? req.body.reason, date: today },
+            dedupeSuffix: `bulk-${String(operation._id)}-${String(line.studentId)}`,
+            createdBy: req.auth!.userId,
+          }),
+        ),
+      )
+    }
     created(res, operation)
   }),
 )
@@ -564,6 +596,39 @@ router.get(
       throw ApiError.forbidden('You are not authorized to view this bulk operation')
     }
     ok(res, operation)
+  }),
+)
+
+router.post(
+  '/discipline/bulk/:id/retry',
+  asyncHandler(async (req, res) => {
+    const existing = await BulkOperation.findById(req.params.id).lean()
+    if (!existing) throw ApiError.notFound('Bulk operation not found')
+    requireSchoolWideAuthority(existing.scope as string, req.auth!.roles)
+    if (existing.type === 'deduction') {
+      if (!req.auth!.permissions.has('marks.deduct') || !req.auth!.permissions.has('marks.adjust.approve')) {
+        throw ApiError.forbidden('Bulk deductions require both mark deduction and approval authority.')
+      }
+    } else if (!req.auth!.permissions.has('marks.reward')) {
+      throw ApiError.forbidden('Missing permission: marks.reward')
+    }
+    const operation = await retryBulkOperation(req.auth!, req.params.id, req)
+    ok(res, operation)
+  }),
+)
+
+router.get(
+  '/discipline/bulk/:id/report.csv',
+  requirePermission('marks.view'),
+  asyncHandler(async (req, res) => {
+    const operation = await BulkOperation.findById(req.params.id)
+    if (!operation) throw ApiError.notFound('Bulk operation not found')
+    if (String(operation.requestedBy) !== String(req.auth!.userId) && !req.auth!.permissions.has('incidents.view_all')) {
+      throw ApiError.forbidden('You are not authorized to download this report')
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="${operation.reference}-results.csv"`)
+    res.send(bulkOperationCsv(operation))
   }),
 )
 

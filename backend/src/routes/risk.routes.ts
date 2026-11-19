@@ -10,9 +10,11 @@ import { FollowUp, Intervention, Recognition, RecognitionPlan, WatchlistEntry } 
 import { User } from '../models/core.js'
 import { assertStudentAccess, visibleStudentQuery } from '../services/rbac.service.js'
 import { evaluateStudentRisk, riskLabel } from '../services/risk.service.js'
+import { buildStudentIntelligence } from '../services/student-intelligence.service.js'
 import { resolveTerm } from '../services/academic.service.js'
 import { rewardStudent } from '../services/ledger.service.js'
 import { writeAudit } from '../services/audit.service.js'
+import { queueParentMessage } from '../services/communication.service.js'
 import { objectId } from './helpers.js'
 
 const router = Router()
@@ -74,9 +76,20 @@ router.get(
   }),
 )
 
+router.get(
+  '/risk/students/:id/insights',
+  requirePermission('risk.view'),
+  asyncHandler(async (req, res) => {
+    const student = await assertStudentAccess(req.auth!, req.params.id)
+    const term = await resolveTerm(req.query.termId as string | undefined)
+    const insights = await buildStudentIntelligence(student._id, req.auth!, term._id)
+    if (!insights) throw ApiError.notFound('Student not found')
+    ok(res, insights)
+  }),
+)
+
 router.post(
-  '/risk/students/:id/recalculate',
-  requirePermission('risk.manage'),
+  '/risk/students/:id/recalculate',  requirePermission('risk.manage'),
   asyncHandler(async (req, res) => {
     const student = await assertStudentAccess(req.auth!, req.params.id)
     const result = await evaluateStudentRisk(
@@ -225,6 +238,7 @@ router.get(
     const filter: Record<string, unknown> = {}
     if (!req.auth!.permissions.has('followups.manage') || req.query.mine === 'true') filter.assignedTo = req.auth!.userId
     if (req.query.status) filter.status = req.query.status
+    if (req.query.type) filter.type = req.query.type
     if (req.query.studentId) filter.studentId = req.query.studentId
     const [total, items] = await Promise.all([
       FollowUp.countDocuments(filter),
@@ -345,6 +359,7 @@ router.post(
       description: z.string().trim().max(2000).optional(),
       points: z.number().int().min(0).max(20).optional().default(0),
       applyMarks: z.boolean().optional().default(false),
+      notifyGuardian: z.boolean().optional().default(false),
       termId: objectId.optional(),
     }),
   }),
@@ -373,15 +388,27 @@ router.post(
       awardedBy: req.auth!.userId,
       termId: term._id,
     })
+    let guardianMessage = null
+    if (req.body.notifyGuardian) {
+      guardianMessage = await queueParentMessage({
+        studentId: student._id,
+        templateKey: 'positive_behaviour_recognition',
+        dedupeSuffix: `recognition:${recognition._id}`,
+        extraVars: {
+          achievement: recognition.title,
+          date: recognition.awardedAt.toLocaleDateString('en-GB'),
+        },
+      })
+    }
     await writeAudit({
       req,
       actor: req.auth,
       action: 'recognition.awarded',
       resourceType: 'Recognition',
       resourceId: String(recognition._id),
-      after: { studentId: String(student._id), points: req.body.points, applyMarks: req.body.applyMarks },
+      after: { studentId: String(student._id), points: req.body.points, applyMarks: req.body.applyMarks, notifyGuardian: req.body.notifyGuardian },
     })
-    created(res, { recognition, ledger })
+    created(res, { recognition, ledger, guardianMessage })
   }),
 )
 

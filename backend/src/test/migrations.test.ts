@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import mongoose from 'mongoose'
 import { connectDatabase, disconnectDatabase } from '../config/db.js'
+// Register the collections the baseline migration indexes so the test does not
+// depend on another file having created them first.
+import '../models/discipline.js'
 import { Migration } from '../models/migration.js'
 import {
   compareMigrations,

@@ -178,6 +178,25 @@ router.patch(
 )
 
 router.post(
+  '/safeguarding/cases/:id/reopen',
+  requirePermission('safeguarding.close'),
+  validate({ body: z.object({ reason: z.string().trim().min(5).max(2000) }) }),
+  asyncHandler(async (req, res) => {
+    const doc = await SafeguardingCase.findById(req.params.id)
+    if (!doc) throw ApiError.notFound('Safeguarding case not found')
+    assertSafeguardingAccess(req.auth!, doc)
+    if (!['resolved', 'closed'].includes(doc.status)) throw ApiError.badRequest('Only resolved or closed cases can be reopened')
+    doc.status = 'open'
+    doc.closedAt = undefined
+    doc.history.push({ at: new Date(), by: req.auth!.userId, action: 'reopened', note: req.body.reason })
+    await doc.save()
+    await writeAccessLog({ actor: req.auth!, resourceType: 'SafeguardingCase', resourceId: String(doc._id), action: 'reopened', req })
+    await writeAudit({ req, actor: req.auth, action: 'safeguarding.reopened', resourceType: 'SafeguardingCase', resourceId: String(doc._id), reason: req.body.reason })
+    ok(res, doc)
+  }),
+)
+
+router.post(
   '/safeguarding/cases/:id/assign',
   requirePermission('safeguarding.assign'),
   validate({ body: z.object({ assignedTo: objectId, note: z.string().trim().max(500).optional() }) }),

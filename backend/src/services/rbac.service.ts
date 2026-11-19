@@ -103,6 +103,9 @@ export async function visibleStudentQuery(ctx: AuthContext): Promise<Record<stri
     const clauses: Record<string, unknown>[] = []
     if (ctx.user.assignedClassIds.length) clauses.push({ classId: { $in: ctx.user.assignedClassIds } })
     if (ctx.user.assignedDormitoryIds.length) clauses.push({ dormitoryId: { $in: ctx.user.assignedDormitoryIds } })
+    // A student's named class teacher always sees that student, even when the
+    // staff record itself carries no class assignment yet.
+    clauses.push({ classTeacherId: ctx.userId })
     if (hasPermission(ctx, 'portal.view_children')) {
       const parent = await Parent.findOne({ portalUserId: ctx.userId }).lean()
       if (parent) {
@@ -110,7 +113,11 @@ export async function visibleStudentQuery(ctx: AuthContext): Promise<Record<stri
         if (links.length) clauses.push({ _id: { $in: links.map((l) => l.studentId) } })
       }
     }
-    if (!clauses.length) return { _id: { $in: [] } }
+    // Boarding staff without explicit allocations still need their roll calls:
+    // widen the scope to every boarder rather than leaving the roster empty.
+    if (!ctx.user.assignedClassIds.length && !ctx.user.assignedDormitoryIds.length && hasPermission(ctx, 'boarding.view')) {
+      clauses.push({ dormitoryId: { $ne: null } })
+    }
     return { $or: clauses }
   }
   if (hasPermission(ctx, 'students.view')) return {}
@@ -123,7 +130,10 @@ export async function visibleStudentQuery(ctx: AuthContext): Promise<Record<stri
   return { _id: { $in: [] } }
 }
 
-export async function canAccessStudent(ctx: AuthContext, student: IStudent | { _id: Types.ObjectId; classId?: Types.ObjectId; dormitoryId?: Types.ObjectId | null }): Promise<boolean> {
+export async function canAccessStudent(
+  ctx: AuthContext,
+  student: IStudent | { _id: Types.ObjectId; classId?: Types.ObjectId; dormitoryId?: Types.ObjectId | null; classTeacherId?: Types.ObjectId | null },
+): Promise<boolean> {
   if (hasPermission(ctx, 'students.view_all')) return true
   if (hasPermission(ctx, 'students.view') && !hasPermission(ctx, 'students.view_assigned')) return true
   if (hasPermission(ctx, 'students.view_assigned')) {
@@ -131,6 +141,9 @@ export async function canAccessStudent(ctx: AuthContext, student: IStudent | { _
     const dormIds = ctx.user.assignedDormitoryIds
     if (student.classId && classIds.includes(String(student.classId))) return true
     if (student.dormitoryId && dormIds.includes(String(student.dormitoryId))) return true
+    if (student.classTeacherId && String(student.classTeacherId) === String(ctx.userId)) return true
+    // Mirrors visibleStudentQuery: unassigned boarding staff supervise boarders.
+    if (!classIds.length && !dormIds.length && hasPermission(ctx, 'boarding.view') && student.dormitoryId) return true
   }
   if (hasPermission(ctx, 'portal.view_children')) {
     const parent = await Parent.findOne({ portalUserId: ctx.userId }).lean()

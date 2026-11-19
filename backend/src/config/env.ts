@@ -21,8 +21,25 @@ const envSchema = z.object({
   SMTP_SECURE: bool,
   SMTP_USER: z.string().optional().default(''),
   SMTP_PASS: z.string().optional().default(''),
-  MAIL_FROM: z.string().default('ConductNexus <no-reply@conductnexus.rw>'),
+  MAIL_FROM: z.string().optional().default(''),
+  /**
+   * Gmail API delivery (OAuth 2.0). A Google API key cannot send mail, so a
+   * refresh token from the sending account is required. SMTP with a Gmail app
+   * password also works and is configured through the SMTP_* variables above.
+   */
+  GMAIL_USER: z
+    .string()
+    .optional()
+    .default('')
+    .refine((v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), 'GMAIL_USER must be an email address'),
+  GMAIL_CLIENT_ID: z.string().optional().default(''),
+  GMAIL_CLIENT_SECRET: z.string().optional().default(''),
+  GMAIL_REFRESH_TOKEN: z.string().optional().default(''),
+  TWO_FACTOR_RESEND_SECONDS: z.coerce.number().min(30).max(300).default(60),
   BACKUP_ENCRYPTION_KEY: z.string().optional().default(''),
+  EVIDENCE_ENCRYPTION_KEY: z.string().optional().default(''),
+  CLAMAV_HOST: z.string().optional().default(''),
+  CLAMAV_PORT: z.coerce.number().default(3310),
   ERROR_REPORTING_PROVIDER: z.string().optional().default('log'),
   BACKUP_SCHEDULE: z.string().default('0 2 * * *'),
   BACKUP_RETENTION_DAYS: z.coerce.number().default(30),
@@ -82,7 +99,15 @@ if (backupKeyError) {
 }
 
 export const backupEncryptionKeyConfigured = env.BACKUP_ENCRYPTION_KEY.trim().length >= BACKUP_KEY_MIN_LENGTH
-export const smtpConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS)
+export const gmailOAuthConfigured = Boolean(
+  env.GMAIL_USER && env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_REFRESH_TOKEN,
+)
+export const smtpConfigured = Boolean(
+  (env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS) || gmailOAuthConfigured,
+)
+export const mailFrom =
+  env.MAIL_FROM.trim() ||
+  (env.GMAIL_USER ? `ConductNexus <${env.GMAIL_USER}>` : 'ConductNexus <no-reply@conductnexus.rw>')
 export const smsConfigured = Boolean(env.AT_USERNAME && env.AT_API_KEY)
 export const firebaseConfigured = Boolean(env.FIREBASE_PROJECT_ID)
 export const whatsappEnabled = env.ENABLE_WHATSAPP

@@ -31,8 +31,32 @@ from starting when it is missing or malformed.
 | `SMTP_PORT` | `587` | no | |
 | `SMTP_SECURE` | — | no | `true` for implicit TLS (usually port 465). |
 | `SMTP_USER` | `''` | no | |
-| `SMTP_PASS` | `''` | no | |
-| `MAIL_FROM` | `ConductNexus <no-reply@conductnexus.rw>` | no | Envelope sender. |
+| `SMTP_PASS` | `''` | no | For Gmail, use a 16-character App Password, not the account password. |
+| `MAIL_FROM` | derived | no | Envelope sender. When empty it becomes `ConductNexus <GMAIL_USER>`, or the no-reply address if Gmail OAuth is not configured. Gmail requires it to match the authenticated account. |
+| `GMAIL_USER` | `''` | no | Gmail account address. Setting all four `GMAIL_*` values enables OAuth2 delivery, which takes precedence over `SMTP_*`. |
+| `GMAIL_CLIENT_ID` | `''` | no | Google Cloud OAuth client ID. |
+| `GMAIL_CLIENT_SECRET` | `''` | no | Google Cloud OAuth client secret. |
+| `GMAIL_REFRESH_TOKEN` | `''` | no | Refresh token authorised for `https://mail.google.com/`. |
+| `TWO_FACTOR_RESEND_SECONDS` | `60` | no | Minimum gap between new sign-in codes (30–300). |
+
+### Gmail delivery for verification and two-factor codes
+
+A Google API key cannot send Gmail; the Gmail API needs delegated user
+credentials. Use either:
+
+1. **App password (quickest):** turn on 2-Step Verification for the account,
+   create an App Password, then set `SMTP_HOST=smtp.gmail.com`,
+   `SMTP_PORT=465`, `SMTP_SECURE=true`, `SMTP_USER=<address>` and
+   `SMTP_PASS=<16-character app password>`.
+2. **OAuth2 (preferred):** create an OAuth client in Google Cloud Console,
+   authorise it once with the `https://mail.google.com/` scope, and set
+   `GMAIL_USER`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` and
+   `GMAIL_REFRESH_TOKEN`.
+
+Two-factor codes are sent from whichever address is configured above. Users
+can collect the code by email or, when their profile has a phone number and
+WhatsApp is linked, by WhatsApp. Do not enable *Require two-factor
+authentication* in Settings → Security until one of these channels is working.
 
 ## Backups
 

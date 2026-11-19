@@ -30,7 +30,8 @@ export type NotificationPayload = {
  */
 export function priorityOf(type: string): 'low' | 'normal' | 'high' | 'critical' {
   if (type.startsWith('safeguarding')) return 'critical'
-  if (type.startsWith('incident') || type.startsWith('risk')) return 'high'
+  if (type.startsWith('welfare')) return 'high'
+  if (type.startsWith('incident') || type.startsWith('risk') || type.startsWith('detention')) return 'high'
   if (type.startsWith('approval') || type.startsWith('appeal')) return 'high'
   if (type.startsWith('communication') || type.startsWith('system')) return 'low'
   return 'normal'

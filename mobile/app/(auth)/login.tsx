@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   KeyboardAvoidingView,
   Platform,
@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons'
 import { useAuth } from '../../src/auth/AuthProvider'
 import { useGoogleSignIn } from '../../src/auth/google'
 import { apiErrorMessage } from '../../src/api/client'
-import type { TwoFactorChallenge } from '../../src/api/endpoints'
+import type { TwoFactorChallenge, TwoFactorChannel } from '../../src/api/endpoints'
 import { Button, TextField } from '../../src/components/ui'
 import { radius, spacing, useTheme } from '../../src/theme'
 
@@ -29,15 +29,24 @@ type FormValues = z.infer<typeof schema>
 
 export default function LoginScreen() {
   const theme = useTheme()
-  const { signIn, verifyTwoFactor, signInWithGoogleToken, biometricsLocked, unlockWithBiometric, schoolName } = useAuth()
+  const { signIn, verifyTwoFactor, resendTwoFactor, signInWithGoogleToken, biometricsLocked, unlockWithBiometric, schoolName } = useAuth()
   const [challenge, setChallenge] = useState<TwoFactorChallenge | null>(null)
   const [code, setCode] = useState('')
   const [verifying, setVerifying] = useState(false)
+  const [resending, setResending] = useState<TwoFactorChannel | null>(null)
+  const [cooldown, setCooldown] = useState(0)
+  const [resendNotice, setResendNotice] = useState<string | null>(null)
   const [verifyError, setVerifyError] = useState<string | null>(null)
   const google = useGoogleSignIn(
     useCallback(
       async (token: string) => {
-        await signInWithGoogleToken(token)
+        const pending = await signInWithGoogleToken(token)
+        if (pending) {
+          setChallenge(pending)
+          setCode(pending.devCode ?? '')
+          setCooldown(60)
+          return
+        }
         router.replace('/')
       },
       [signInWithGoogleToken],
@@ -53,12 +62,20 @@ export default function LoginScreen() {
     defaultValues: { email: '', password: '' },
   })
 
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const timer = setInterval(() => setCooldown((value) => Math.max(0, value - 1)), 1000)
+    return () => clearInterval(timer)
+  }, [cooldown])
+
   const submit = handleSubmit(async (values) => {
     try {
       const pending = await signIn(values.email, values.password)
       if (pending) {
         setChallenge(pending)
         setCode(pending.devCode ?? '')
+        setCooldown(60)
+        if (pending.warning) setResendNotice(pending.warning)
         return
       }
       router.replace('/')
@@ -81,10 +98,35 @@ export default function LoginScreen() {
     }
   }
 
+  const resend = async (channel: TwoFactorChannel) => {
+    if (!challenge) return
+    setVerifyError(null)
+    setResendNotice(null)
+    setResending(channel)
+    try {
+      const delivery = await resendTwoFactor(challenge.challenge, channel)
+      setChallenge({ ...challenge, ...delivery })
+      setCode(delivery.devCode ?? '')
+      setCooldown(60)
+      setResendNotice(
+        delivery.warning ??
+          (delivery.delivered
+            ? `A new code was sent to ${delivery.maskedDestination} by ${delivery.channel === 'whatsapp' ? 'WhatsApp' : 'email'}.`
+            : null),
+      )
+    } catch (err) {
+      setVerifyError(apiErrorMessage(err))
+    } finally {
+      setResending(null)
+    }
+  }
+
   const cancelChallenge = () => {
     setChallenge(null)
     setCode('')
     setVerifyError(null)
+    setResendNotice(null)
+    setCooldown(0)
   }
 
   const unlock = async () => {
@@ -114,9 +156,13 @@ export default function LoginScreen() {
               <View>
                 <View style={{ backgroundColor: theme.primarySoft, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md }}>
                   <Text style={{ color: theme.primary, fontSize: 13 }}>
-                    We sent a 6-digit code to {challenge.email}. Enter it to finish signing in.
+                    We sent a 6-digit code to {challenge.maskedDestination} by {challenge.channel === 'whatsapp' ? 'WhatsApp' : 'email'}.
+                    Enter it to finish signing in.
                   </Text>
                 </View>
+                {resendNotice ? (
+                  <Text style={{ color: theme.textMuted, fontSize: 12, marginBottom: spacing.sm }}>{resendNotice}</Text>
+                ) : null}
                 <TextField
                   label="Verification code"
                   placeholder="000000"
@@ -129,6 +175,23 @@ export default function LoginScreen() {
                   error={verifyError ?? undefined}
                 />
                 <Button title="Verify and sign in" icon="shield-checkmark" onPress={() => void verify()} loading={verifying} />
+                <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+                  {challenge.channels.map((channel) => (
+                    <Button
+                      key={channel}
+                      title={
+                        cooldown > 0
+                          ? `Resend in ${cooldown}s`
+                          : `Send code by ${channel === 'whatsapp' ? 'WhatsApp' : 'email'}`
+                      }
+                      icon={channel === 'whatsapp' ? 'logo-whatsapp' : 'mail-outline'}
+                      variant="secondary"
+                      loading={resending === channel}
+                      disabled={cooldown > 0 || resending !== null}
+                      onPress={() => void resend(channel)}
+                    />
+                  ))}
+                </View>
                 <Pressable onPress={cancelChallenge} hitSlop={8} style={{ marginTop: spacing.md }}>
                   <Text style={{ color: theme.textMuted, fontSize: 13, textAlign: 'center' }}>Use a different account</Text>
                 </Pressable>

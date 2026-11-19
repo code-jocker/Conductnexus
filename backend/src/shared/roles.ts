@@ -26,6 +26,7 @@ const all = PERMISSION_KEYS
 const admin = all.filter(
   (k) =>
     !k.startsWith('safeguarding.') &&
+    !k.startsWith('welfare.') &&
     !k.startsWith('investigations.decide') &&
     !k.startsWith('appeals.decide') &&
     !k.startsWith('meetings.notes.') &&
@@ -40,6 +41,10 @@ const headteacher = [
   'students.restore', 'students.lifecycle', 'students.manage_guardians', 'students.documents', 'students.activity.view',
   'students.promote', 'students.promote.approve',
   'classes.view', 'dormitories.view', 'academic_years.manage', 'terms.manage',
+  'attendance.view', 'attendance.record', 'attendance.correct', 'attendance.correct.approve',
+  'attendance.excuse.review', 'attendance.reports', 'boarding.view', 'boarding.record', 'boarding.manage', 'boarding.escalate',
+  'welfare.view', 'welfare.view_all', 'welfare.manage', 'welfare.records.view', 'welfare.assign', 'welfare.escalate', 'welfare.refer',
+  'detention.view', 'detention.manage',
   'incidents.view', 'incidents.view_all', 'incidents.review', 'incidents.escalate', 'incidents.close',
   'marks.view', 'marks.adjust.approve', 'marks.reverse', 'risk.view', 'risk.manage', 'risk.escalate',
   'blacklist.view', 'blacklist.manage', 'interventions.view', 'interventions.manage',
@@ -58,6 +63,10 @@ const deputy = [
   'students.view', 'students.view_all', 'students.update', 'students.import', 'students.export',
   'students.promote', 'students.restore', 'students.lifecycle', 'students.manage_guardians', 'students.documents',
   'students.activity.view', 'classes.view', 'dormitories.view',
+  'attendance.view', 'attendance.record', 'attendance.correct', 'attendance.correct.approve',
+  'attendance.excuse.review', 'attendance.reports', 'boarding.view', 'boarding.record', 'boarding.manage', 'boarding.escalate',
+  'welfare.view', 'welfare.view_all', 'welfare.manage', 'welfare.records.view', 'welfare.assign', 'welfare.escalate', 'welfare.refer',
+  'detention.view', 'detention.manage',
   'incidents.view', 'incidents.view_all', 'incidents.create', 'incidents.update', 'incidents.submit',
   'incidents.review', 'incidents.escalate', 'incidents.close', 'marks.view', 'marks.deduct', 'marks.reward',
   'marks.adjust.request', 'marks.adjust.approve', 'marks.reverse', 'risk.view', 'risk.manage', 'risk.escalate',
@@ -77,26 +86,35 @@ const teacher = [
   'interventions.view', 'followups.view', 'followups.manage', 'recognition.view', 'recognition.create',
   'evidence.view', 'evidence.upload', 'policies.view', 'meetings.view', 'calendar.view',
   'notifications.view', 'offences.view', 'letters.view', 'students.activity.view',
+  'attendance.view', 'attendance.record', 'attendance.correct', 'attendance.reports',
+  'welfare.refer', 'detention.view',
 ]
 
 const it = [
   'users.view', 'system.monitor', 'backups.manage', 'integrations.manage', 'audit.view',
   'whatsapp.manage', 'notifications.manage', 'data_protection.view', 'settings.manage',
+  // Read-only visibility for module health checks; IT must never edit registers.
+  'attendance.view',
 ]
 
 const patron = [
-  'students.view', 'students.view_assigned', 'incidents.view_assigned', 'incidents.create',
+  'students.view', 'students.view_all', 'students.view_assigned', 'incidents.view_assigned', 'incidents.create',
   'risk.view', 'interventions.view', 'interventions.manage', 'followups.view', 'followups.manage',
   'recognition.view', 'recognition.create', 'recognition.manage', 'safeguarding.view',
   'safeguarding.create', 'evidence.upload', 'policies.view', 'meetings.view', 'meetings.manage',
   'calendar.view', 'calendar.manage', 'notifications.view', 'parents.view', 'students.activity.view',
+  'attendance.view', 'attendance.record', 'attendance.correct', 'attendance.reports',
+  'boarding.view', 'boarding.record', 'boarding.manage', 'boarding.escalate',
+  'welfare.view', 'welfare.view_all', 'welfare.manage', 'welfare.records.view', 'welfare.assign', 'welfare.escalate', 'welfare.refer',
 ]
 
 const matron = [
   'students.view', 'students.view_assigned', 'incidents.view_assigned', 'incidents.create',
   'risk.view', 'interventions.view', 'followups.view', 'followups.manage', 'recognition.view',
   'recognition.create', 'safeguarding.create', 'policies.view', 'meetings.view', 'calendar.view',
-  'notifications.view',
+  'notifications.view', 'attendance.view', 'attendance.record', 'attendance.correct', 'attendance.reports',
+  'boarding.view', 'boarding.record', 'boarding.manage', 'boarding.escalate',
+  'welfare.view', 'welfare.manage', 'welfare.refer',
 ]
 
 const bursar = ['students.view', 'notifications.view', 'calendar.view', 'policies.view']
@@ -107,7 +125,9 @@ const dos = [
   'reports.export', 'analytics.view', 'incidents.view', 'incidents.view_all', 'marks.view', 'risk.view',
   'interventions.view', 'interventions.manage', 'followups.view', 'followups.manage', 'recognition.view',
   'recognition.manage', 'policies.view', 'meetings.view', 'meetings.manage', 'calendar.view',
-  'calendar.manage', 'notifications.view',
+  'calendar.manage', 'notifications.view', 'attendance.view', 'attendance.reports', 'boarding.view',
+  'welfare.view', 'welfare.view_all', 'welfare.manage', 'welfare.assign', 'welfare.refer',
+  'detention.view', 'detention.manage',
 ]
 
 const librarian = [
@@ -121,6 +141,7 @@ const secretary = [
   'parent_contacts.manage', 'letters.view', 'letters.create', 'letters.issue', 'meetings.view',
   'meetings.manage', 'calendar.view', 'calendar.manage', 'notifications.view', 'notifications.manage',
   'policies.view', 'reports.view', 'evidence.upload', 'students.export',
+  'attendance.view', 'attendance.excuse.review', 'attendance.reports', 'boarding.view',
 ]
 
 export const ROLE_SEEDS: RoleSeed[] = [

@@ -8,8 +8,11 @@ import { Incident } from '../models/discipline.js'
 import { Letter, MessageQueue, NotificationTemplate, WhatsappSession } from '../models/communications.js'
 import { ApiError } from '../shared/errors.js'
 import { logger } from '../shared/logger.js'
-import { env, whatsappEnabled } from '../config/env.js'
+import { env, smsConfigured, smtpConfigured, whatsappEnabled } from '../config/env.js'
 import { extractPlaceholders } from '../data/templateLibrary.js'
+import { sendMail } from './email.service.js'
+import { sendSms } from './sms.service.js'
+import { escapeHtml } from '../shared/utils.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -22,6 +25,8 @@ export type ParentMessageInput = {
   dedupeSuffix?: string
   createdBy?: Types.ObjectId
   onlyParentId?: string | Types.ObjectId
+  /** Safeguarding alerts bypass quiet hours and are queued immediately. */
+  critical?: boolean
 }
 
 export function renderTemplate(template: string, vars: Record<string, string | number | undefined>): string {
@@ -59,16 +64,33 @@ export function assertNoUnresolvedPlaceholders(missing: string[], label: string)
 }
 
 /**
- * Parent communication is WhatsApp-only. When the WhatsApp session is not
- * connected the message is skipped rather than silently downgraded to SMS
- * or email, so guardians never receive a channel the school did not choose.
+ * Delivery channels this guardian has actively consented to, preferred channel
+ * first. A missing consent is a no, never an implicit yes. Email and SMS are
+ * offered only when their provider is configured, so the queue never fills with
+ * messages that cannot physically be delivered.
  */
-function channelFor(parent: InstanceType<typeof Parent>): 'whatsapp' | null {
+function channelsFor(parent: InstanceType<typeof Parent>): Array<'whatsapp' | 'email' | 'sms'> {
   const settings = getSettingsSync()
-  if (!settings) return null
-  const phone = String(parent.phone ?? '').trim()
-  if (phone && parent.whatsappConsent && settings.comms.whatsappEnabled) return 'whatsapp'
-  return null
+  if (!settings) return []
+  const enabled: Array<'whatsapp' | 'email' | 'sms'> = []
+  if (settings.comms.whatsappEnabled && parent.whatsappConsent && String(parent.phone ?? '').trim()) {
+    enabled.push('whatsapp')
+  }
+  if (smtpConfigured && parent.emailConsent && String(parent.email ?? '').trim()) {
+    enabled.push('email')
+  }
+  if (settings.comms.smsEnabled && smsConfigured && parent.smsConsent && String(parent.phone ?? '').trim()) {
+    enabled.push('sms')
+  }
+  const preferred = parent.preferredChannel as 'whatsapp' | 'email' | 'sms' | 'call'
+  if (preferred !== 'call' && enabled.includes(preferred)) {
+    return [preferred, ...enabled.filter((channel) => channel !== preferred)]
+  }
+  return enabled
+}
+
+function recipientFor(parent: InstanceType<typeof Parent>, channel: 'whatsapp' | 'email' | 'sms'): string {
+  return channel === 'email' ? String(parent.email ?? '') : String(parent.phone ?? '')
 }
 
 let cachedSettings: Awaited<ReturnType<typeof getSettings>> | null = null
@@ -141,22 +163,28 @@ export async function queueParentMessage(input: ParentMessageInput): Promise<{ q
       `Template "${input.templateKey}" subject`,
     )
   }
-  // Every parent-facing (WhatsApp) message carries the parent-portal link so
-  // guardians can review authorised, linked-child details.
-  const body = template.channel === 'whatsapp' ? `${renderedBody}\n\nParent portal: ${portalUrl}` : renderedBody
+  // Every parent-facing message carries the parent-portal link so guardians can
+  // review authorised, linked-child details, whichever channel was chosen.
+  const body = `${renderedBody}\n\nParent portal: ${portalUrl}`
+  const nextAttemptAt = input.critical ? new Date() : quietHoursNextAttempt()
+  const subject = renderedSubject || `${settings.school.name || 'ConductNexus'} — ${template.name}`
 
   let queued = 0
   let skipped = 0
   for (const link of parents) {
     const parent = link.parentId
     if (!parent) continue
-    const channel = channelFor(parent)
+    const [channel] = channelsFor(parent)
     if (!channel) {
       skipped++
       continue
     }
-    const to = parent.phone
-    const dedupeKey = `${input.templateKey}:${input.incidentId ?? input.letterId ?? input.dedupeSuffix ?? Date.now()}:${parent._id}`
+    const to = recipientFor(parent, channel)
+    if (!to) {
+      skipped++
+      continue
+    }
+    const dedupeKey = `${input.templateKey}:${input.incidentId ?? input.letterId ?? input.dedupeSuffix ?? Date.now()}:${parent._id}:${channel}`
     try {
       await MessageQueue.create({
         channel,
@@ -166,12 +194,13 @@ export async function queueParentMessage(input: ParentMessageInput): Promise<{ q
         incidentId: input.incidentId,
         letterId: input.letterId,
         templateKey: input.templateKey,
-        subject: renderedSubject || undefined,
+        subject: channel === 'whatsapp' ? undefined : subject,
         body,
         status: 'queued',
         maxAttempts: settings.comms.retryLimit,
-        nextAttemptAt: quietHoursNextAttempt(),
+        nextAttemptAt,
         dedupeKey,
+        priority: input.critical ? 'critical' : 'normal',
         createdBy: input.createdBy,
       })
       queued++
@@ -233,22 +262,32 @@ function whatsappProfileDir(): string {
 async function reapOrphanedWhatsappBrowsers(): Promise<number> {
   const profile = whatsappProfileDir()
   try {
-    const script =
+    // Run PowerShell directly. Going through `shell: true` on Windows launches
+    // cmd.exe, where the Get-CimInstance cmdlet does not exist.
+    const { stdout } =
       process.platform === 'win32'
-        ? [
-            `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |`,
-            `Where-Object { $_.CommandLine -like '*${profile}*' } |`,
-            `ForEach-Object { $_.ProcessId }`,
-          ].join(' ')
-        : `pgrep -f ${JSON.stringify(profile)} || true`
-    const { stdout } = await execFileAsync(script, { shell: true, timeout: 20_000 })
+        ? await execFileAsync(
+            'powershell.exe',
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              [
+                `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |`,
+                `Where-Object { $_.CommandLine -like '*${profile}*' } |`,
+                `ForEach-Object { $_.ProcessId }`,
+              ].join(' '),
+            ],
+            { timeout: 20_000 },
+          )
+        : await execFileAsync('pgrep', ['-f', profile], { timeout: 20_000 })
     const pids = String(stdout)
       .split(/\r?\n/)
       .map((line) => Number.parseInt(line.trim(), 10))
       .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
     for (const pid of pids) {
       try {
-        if (process.platform === 'win32') await execFileAsync(`taskkill /PID ${pid} /T /F`, { timeout: 20_000 })
+        if (process.platform === 'win32') await execFileAsync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 20_000 })
         else process.kill(pid, 'SIGKILL')
       } catch (err) {
         logger.debug({ err, pid }, 'Could not reap orphaned WhatsApp browser')
@@ -445,6 +484,10 @@ export async function startWhatsapp(phoneNumber?: string): Promise<{ status: str
       await persistStatus('disconnected', { lastError: explainWhatsAppError(reason) })
       scheduleReconnect()
     })
+    client.on('message_ack', (message: { id?: { _serialized?: string } }, ack: number) => {
+      const id = message?.id?._serialized
+      if (id) void recordWhatsappReceipt(id, ack)
+    })
 
     wa.initPromise = client.initialize().catch(async (err: Error) => {
       logger.error({ err }, 'WhatsApp initialization failed')
@@ -499,14 +542,67 @@ export async function whatsappStatus() {
   }
 }
 
-async function sendWhatsapp(to: string, body: string): Promise<{ ok: boolean; error?: string }> {
+type DeliveryResult = {
+  ok: boolean
+  error?: string
+  provider?: string
+  providerMessageId?: string
+}
+
+async function sendWhatsapp(to: string, body: string): Promise<DeliveryResult> {
   if (!wa.client || wa.status !== 'ready') return { ok: false, error: 'WhatsApp is not connected' }
   try {
     const number = to.replace(/[^\d]/g, '')
-    await wa.client.sendMessage(`${number}@c.us`, body)
-    return { ok: true }
+    const message = await wa.client.sendMessage(`${number}@c.us`, body)
+    // The serialized id is what the message_ack event reports back, so it is the
+    // key a delivery receipt can be matched against later.
+    const providerMessageId: string | undefined =
+      message?.id?._serialized ?? (message?.id?.id ? String(message.id.id) : undefined)
+    return { ok: true, provider: 'whatsapp', providerMessageId }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'WhatsApp send failed' }
+  }
+}
+
+/**
+ * Direct text delivery for time-critical messages such as sign-in codes.
+ *
+ * The normal parent queue retries on a schedule, but a login code expires in ten
+ * minutes, so it must be sent now and fail loudly when WhatsApp is offline.
+ */
+export async function sendWhatsAppText(to: string, body: string): Promise<DeliveryResult> {
+  if (!whatsappEnabled) return { ok: false, error: 'WhatsApp is disabled on this server' }
+  return sendWhatsapp(to, body)
+}
+
+const WHATSAPP_ACK_LABELS: Record<number, string> = {
+  0: 'failed',
+  1: 'pending',
+  2: 'server',
+  3: 'delivered',
+  4: 'read',
+}
+
+/**
+ * Records a WhatsApp delivery acknowledgement against the queued message.
+ *
+ * whatsapp-web.js reports acknowledgements through an event, not the send call,
+ * so the provider id captured at send time is the only way to link "delivered"
+ * or "read" back to the row an administrator is looking at.
+ */
+export async function recordWhatsappReceipt(providerMessageId: string, ack: number | string): Promise<void> {
+  const label = typeof ack === 'number' ? WHATSAPP_ACK_LABELS[ack] ?? `ack_${ack}` : String(ack)
+  const now = new Date()
+  const set: Record<string, unknown> = { ackStatus: label }
+  if (label === 'delivered' || label === 'read') set.deliveredAt = now
+  if (label === 'read') set.readAt = now
+  try {
+    await MessageQueue.updateOne(
+      { providerMessageId },
+      { $set: set, $push: { receipts: { at: now, status: label } } },
+    )
+  } catch (err) {
+    logger.debug({ err, providerMessageId, label }, 'Could not record WhatsApp receipt')
   }
 }
 
@@ -566,8 +662,8 @@ export async function processMessageQueue(limit = 20): Promise<{ processed: numb
   try {
     await refreshCommsSettings()
     await rerouteStrandedSms()
-    // Keep messages queued while the phone is offline instead of burning
-    // attempts against a session that cannot deliver yet.
+    // WhatsApp readiness gates WhatsApp rows only. Email and SMS keep flowing
+    // while the phone is unlinked, so one broken channel cannot freeze the queue.
     const delivery = deliveryBlockReason()
     if (!delivery.ready) {
       workerBlockedReason = delivery.reason
@@ -575,12 +671,15 @@ export async function processMessageQueue(limit = 20): Promise<{ processed: numb
       const sinceLastLog = lastBlockedLog ? Date.now() - lastBlockedLog.getTime() : Number.POSITIVE_INFINITY
       if (sinceLastLog > 5 * 60_000) {
         lastBlockedLog = new Date()
-        logger.warn({ reason: delivery.reason, status: delivery.status, enabled: delivery.enabled }, 'Message queue paused: WhatsApp is not ready')
+        logger.warn(
+          { reason: delivery.reason, status: delivery.status, enabled: delivery.enabled },
+          'WhatsApp messages are parked until the phone is linked; email and SMS continue',
+        )
       }
-      return { processed: 0, sent: 0, failed: 0 }
+    } else {
+      workerBlockedReason = null
+      workerBlockedAt = null
     }
-    workerBlockedReason = null
-    workerBlockedAt = null
     const now = new Date()
     // A worker that crashed after claiming a message would leave it in
     // 'sending' forever. Reclaim expired leases before processing.
@@ -597,39 +696,54 @@ export async function processMessageQueue(limit = 20): Promise<{ processed: numb
       },
     )
     if (recovered.modifiedCount) workerRecovered += recovered.modifiedCount
+    // Critical safeguarding alerts are picked up before routine messaging.
+    const claimable: Record<string, unknown> = {
+      status: { $in: ['queued', 'failed'] },
+      nextAttemptAt: { $lte: now },
+    }
+    if (!delivery.ready) claimable.channel = { $ne: 'whatsapp' }
     for (let i = 0; i < limit; i++) {
-      const msg = await MessageQueue.findOneAndUpdate(
-        { status: { $in: ['queued', 'failed'] }, nextAttemptAt: { $lte: now } },
-        { $set: { status: 'sending', leaseUntil: new Date(now.getTime() + 5 * 60_000) } },
-        { new: true, sort: { nextAttemptAt: 1 } },
-      )
+      const msg = await MessageQueue.findOneAndUpdate(claimable, {
+        $set: { status: 'sending', leaseUntil: new Date(now.getTime() + 5 * 60_000) },
+      }, { new: true, sort: { priority: -1, nextAttemptAt: 1 } })
       if (!msg) break
 
       try {
-        let result: { ok: boolean; error?: string; provider?: string } = { ok: false, error: 'Unknown channel' }
-        if (msg.channel !== 'whatsapp') {
-          msg.status = 'manual_review'
-          msg.lastError = 'Parent messaging is WhatsApp only. This legacy channel was not sent.'
-          msg.leaseUntil = undefined
-          await msg.save()
-          failed++
-          continue
+        let result: DeliveryResult = { ok: false, error: `Unsupported channel "${msg.channel}"` }
+        if (msg.channel === 'whatsapp') {
+          result = await sendWhatsapp(msg.to, msg.body)
+        } else if (msg.channel === 'email') {
+          const mail = await sendMail({
+            to: msg.to,
+            subject: msg.subject || 'ConductNexus notification',
+            html: `<p>${escapeHtml(msg.body).replace(/\n/g, '<br/>')}</p>`,
+            text: msg.body,
+          })
+          result = mail.delivered
+            ? { ok: true, provider: 'smtp', providerMessageId: mail.id }
+            : { ok: false, error: 'Email could not be delivered; check the SMTP configuration and the stored outbox.' }
+        } else if (msg.channel === 'sms') {
+          const sms = await sendSms(msg.to, msg.body)
+          result = sms.ok
+            ? { ok: true, provider: sms.provider, providerMessageId: sms.messageId }
+            : { ok: false, error: sms.error }
         }
-        result = await sendWhatsapp(msg.to, msg.body)
 
         if (result.ok) {
           msg.status = 'sent'
           msg.sentAt = new Date()
           msg.provider = result.provider ?? msg.channel
+          msg.providerMessageId = result.providerMessageId
           msg.leaseUntil = undefined
           await msg.save()
           sent++
           if (msg.incidentId) await Incident.updateOne({ _id: msg.incidentId }, { $set: { parentNotificationStatus: 'sent' } })
           if (msg.letterId) await Letter.updateOne({ _id: msg.letterId }, { $set: { deliveryStatus: 'sent' } })
         } else {
+          const permanent = isPermanentDeliveryError(result.error)
           msg.attempts += 1
           msg.lastError = result.error
-          if (msg.attempts >= msg.maxAttempts) {
+          if (permanent || msg.attempts >= msg.maxAttempts) {
             msg.status = 'dead_letter'
           } else {
             msg.status = 'failed'
@@ -661,6 +775,17 @@ export async function processMessageQueue(limit = 20): Promise<{ processed: numb
   return { processed: sent + failed, sent, failed }
 }
 
+/**
+ * Errors that will not fix themselves on the next tick. They still land in the
+ * dead-letter queue, where an administrator can retry them after changing the
+ * number, provider credentials or settings.
+ */
+function isPermanentDeliveryError(error?: string): boolean {
+  const text = String(error ?? '').toLowerCase()
+  if (!text) return false
+  return /invalid phone|no phone|not a valid|credentials are missing|smtp configuration|not configured/.test(text)
+}
+
 /** Dispatch queued parent messages immediately after an approval or send action. */
 export function kickMessageQueue(): void {
   if (workerRunning) {
@@ -670,21 +795,33 @@ export function kickMessageQueue(): void {
   void processMessageQueue().catch((err) => logger.error({ err }, 'Message queue dispatch failed'))
 }
 
+/**
+ * A retry keeps the channel the guardian actually consented to. Silently
+ * switching a failed email or SMS onto WhatsApp would bypass that consent.
+ */
 export async function retryMessage(id: string) {
   const msg = await MessageQueue.findById(id)
   if (!msg) throw ApiError.notFound('Message not found')
   if (!['failed', 'dead_letter', 'manual_review'].includes(msg.status)) {
     throw ApiError.badRequest('Only failed or dead-letter messages can be retried')
   }
-  if (msg.channel !== 'whatsapp') {
-    const settings = getSettingsSync()
-    if (!settings?.comms.whatsappEnabled || wa.status !== 'ready') {
-      throw ApiError.badRequest('Reconnect WhatsApp before retrying. SMS and email delivery are disabled.')
-    }
+  const settings = getSettingsSync()
+  if (msg.channel === 'whatsapp') {
+    if (wa.status !== 'ready') throw ApiError.badRequest('Reconnect WhatsApp before retrying this message.')
     if (!/^[+\d][\d\s-]{7,}$/.test(msg.to.trim())) {
       throw ApiError.badRequest('This message has no phone number. Delete it instead of retrying.')
     }
-    msg.channel = 'whatsapp'
+  } else if (msg.channel === 'email') {
+    if (!smtpConfigured) throw ApiError.badRequest('Configure SMTP before retrying this email.')
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(msg.to.trim())) {
+      throw ApiError.badRequest('This message has no valid email address. Delete it instead of retrying.')
+    }
+  } else if (msg.channel === 'sms') {
+    if (!settings?.comms.smsEnabled || !smsConfigured) {
+      throw ApiError.badRequest('Enable SMS and add Africa\'s Talking credentials before retrying this message.')
+    }
+  } else {
+    throw ApiError.badRequest(`Unsupported channel "${msg.channel}"`)
   }
   msg.status = 'queued'
   msg.attempts = 0
@@ -692,15 +829,42 @@ export async function retryMessage(id: string) {
   msg.lastError = undefined
   msg.leaseUntil = undefined
   await msg.save()
+  kickMessageQueue()
   return msg
 }
 
+/** Requeues every dead-letter row in one operation so recovery is not one-by-one. */
+export async function retryDeadLetters(input: { channel?: string; limit?: number } = {}) {
+  const filter: Record<string, unknown> = {
+    status: 'dead_letter',
+    ...(input.channel ? { channel: input.channel } : {}),
+  }
+  const limit = Math.min(Math.max(input.limit ?? 200, 1), 1000)
+  const rows = await MessageQueue.find(filter).sort({ createdAt: 1 }).limit(limit).select('_id channel').lean()
+  if (!rows.length) return { retried: 0, byChannel: {} as Record<string, number> }
+  const ids = rows.map((row) => row._id)
+  await MessageQueue.updateMany(
+    { _id: { $in: ids } },
+    { $set: { status: 'queued', attempts: 0, nextAttemptAt: new Date() }, $unset: { lastError: 1, leaseUntil: 1 } },
+  )
+  const byChannel = rows.reduce<Record<string, number>>((acc, row) => {
+    acc[row.channel] = (acc[row.channel] ?? 0) + 1
+    return acc
+  }, {})
+  kickMessageQueue()
+  return { retried: rows.length, byChannel }
+}
+
 /**
- * Parent messaging is WhatsApp-only, so any unsent SMS rows left over from
- * before that decision are moved onto WhatsApp once the session is ready.
+ * Moves unsent SMS rows onto WhatsApp only when SMS cannot be delivered at all
+ * (provider or setting missing) and the guardian has WhatsApp consent. When SMS
+ * is configured the rows are delivered as SMS — rerouting would ignore consent.
  */
 export async function rerouteStrandedSms(force = false): Promise<{ rerouted: number; reason?: string }> {
   const settings = getSettingsSync()
+  if (settings?.comms.smsEnabled && smsConfigured) {
+    return { rerouted: 0, reason: 'SMS is configured; stranded SMS messages are delivered directly.' }
+  }
   if (!settings?.comms.whatsappEnabled) return { rerouted: 0, reason: 'WhatsApp is disabled in Settings → Communications.' }
   if (wa.status !== 'ready') return { rerouted: 0, reason: 'WhatsApp is not connected.' }
   const filter = {
@@ -715,22 +879,102 @@ export async function rerouteStrandedSms(force = false): Promise<{ rerouted: num
   return { rerouted: result.modifiedCount }
 }
 
-/** Remove failed SMS/email queue rows so only WhatsApp remains in the queue. */
+/**
+ * Clears failed rows for channels that cannot currently deliver. A configured
+ * SMS or email channel is left alone — those messages are retryable and
+ * deleting them would destroy a guardian's only notice.
+ */
 export async function purgeNonWhatsappFailures(): Promise<{ purged: number; byChannel: Record<string, number> }> {
+  const settings = getSettingsSync()
+  const unavailable: string[] = []
+  if (!settings?.comms.smsEnabled || !smsConfigured) unavailable.push('sms')
+  if (!smtpConfigured) unavailable.push('email')
+  if (!unavailable.length) return { purged: 0, byChannel: {} }
+  const match = {
+    channel: { $in: unavailable },
+    status: { $in: ['failed', 'dead_letter', 'manual_review'] },
+  }
   const rows = await MessageQueue.aggregate<{ _id: string; count: number }>([
-    { $match: { channel: { $in: ['sms', 'email'] }, status: { $in: ['failed', 'dead_letter', 'manual_review'] } } },
+    { $match: match },
     { $group: { _id: '$channel', count: { $sum: 1 } } },
   ])
-  const result = await MessageQueue.deleteMany({
-    channel: { $in: ['sms', 'email'] },
-    status: { $in: ['failed', 'dead_letter', 'manual_review'] },
-  })
+  const result = await MessageQueue.deleteMany(match)
   const byChannel = Object.fromEntries(rows.map((r) => [r._id, r.count]))
-  if (result.deletedCount) logger.info({ count: result.deletedCount, byChannel }, 'Purged failed non-WhatsApp messages')
+  if (result.deletedCount) logger.info({ count: result.deletedCount, byChannel }, 'Purged failures on unavailable channels')
   return { purged: result.deletedCount, byChannel }
 }
 
 export async function queueStatusCounts() {
   const rows = await MessageQueue.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }])
   return Object.fromEntries(rows.map((r) => [r._id as string, r.count as number]))
+}
+
+export type DeliveryAnalytics = {
+  windowDays: number
+  totals: Record<string, number>
+  byChannel: Record<string, Record<string, number>>
+  deliveryRate: number | null
+  readRate: number | null
+  pendingNow: number
+  recentFailures: Array<{ channel: string; to: string; templateKey?: string; error?: string; at: Date }>
+  topFailureReasons: Array<{ reason: string; count: number }>
+}
+
+/**
+ * Delivery picture for the communications dashboard: what was attempted per
+ * channel, what actually landed, what is stuck, and why it failed.
+ */
+export async function deliveryAnalytics(windowDays = 7): Promise<DeliveryAnalytics> {
+  const days = Math.min(Math.max(Math.trunc(windowDays) || 7, 1), 90)
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+  const [rows, pendingNow, readCount, recentFailures, reasons] = await Promise.all([
+    MessageQueue.aggregate<{ _id: { channel: string; status: string }; count: number }>([
+      { $match: { createdAt: { $gte: since } } },
+      { $group: { _id: { channel: '$channel', status: '$status' }, count: { $sum: 1 } } },
+    ]),
+    MessageQueue.countDocuments({ status: { $in: ['queued', 'sending', 'failed'] } }),
+    MessageQueue.countDocuments({ createdAt: { $gte: since }, readAt: { $exists: true } }),
+    MessageQueue.find({ status: { $in: ['failed', 'dead_letter', 'manual_review'] } })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('channel to templateKey lastError createdAt')
+      .lean(),
+    MessageQueue.aggregate<{ _id: string; count: number }>([
+      { $match: { createdAt: { $gte: since }, lastError: { $type: 'string', $ne: '' } } },
+      { $group: { _id: '$lastError', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 5 },
+    ]),
+  ])
+
+  const totals: Record<string, number> = {}
+  const byChannel: Record<string, Record<string, number>> = {}
+  for (const row of rows) {
+    const channel = row._id.channel
+    byChannel[channel] ??= {}
+    byChannel[channel][row._id.status] = row.count
+    totals[row._id.status] = (totals[row._id.status] ?? 0) + row.count
+  }
+  const attempted = (totals.sent ?? 0) + (totals.failed ?? 0) + (totals.dead_letter ?? 0)
+  const deliveryRate = attempted ? Math.round(((totals.sent ?? 0) / attempted) * 1000) / 10 : null
+  const readRate = totals.sent ? Math.round((readCount / totals.sent) * 1000) / 10 : null
+  return {
+    windowDays: days,
+    totals,
+    byChannel,
+    deliveryRate,
+    readRate,
+    pendingNow,
+    recentFailures: recentFailures.map((row) => {
+      const contact = String(row.to ?? '')
+      return {
+        channel: row.channel,
+        to: contact.length > 5 ? `${contact.slice(0, 2)}****${contact.slice(-2)}` : '****',
+        templateKey: row.templateKey,
+        error: row.lastError,
+        at: row.createdAt,
+      }
+    }),
+    topFailureReasons: reasons.map((row) => ({ reason: row._id, count: row.count })),
+  }
 }

@@ -752,6 +752,176 @@ Itariki: {{date}}
 Ku bisobanuro birambuye, mwavugana n’ubuyobozi bw’ishuri.`,
     },
   },
+  {
+    key: 'attendance_absence',
+    name: 'Attendance — absence or lateness',
+    nameRw: 'Kwitabira — kutaboneka cyangwa gutinda',
+    description: 'Informs guardians that a student was marked absent or late. Never deducts conduct marks.',
+    category: 'parent_engagement',
+    channel: 'whatsapp',
+    en: {
+      subject: 'Attendance notification',
+      body: `Dear Parent/Guardian,
+
+This is an attendance notification for {{studentName}} ({{studentId}}) on {{attendanceDate}}.
+
+Marked status: {{attendanceStatus}}
+Reason recorded: {{attendanceReason}}
+
+Attendance is recorded separately from conduct marks; this message does not change the student's discipline balance. Please contact the school if this record needs correction, or submit an excuse through the parent portal.
+
+Kind regards,
+{{schoolName}}`,
+    },
+    rw: {
+      subject: 'Amakuru ku kwitabira',
+      body: `Mubyeyi/Murera,
+
+Aya ni amakuru ku bijyanye no kwitabira kwa {{studentName}} ({{studentId}}) ku wa {{attendanceDate}}.
+
+Imiterere yanditswe: {{attendanceStatus}}
+Impamvu yanditswe: {{attendanceReason}}
+
+Kwitabira kwandikwa ukwako, ntibihindura amanota y'imyitwarire. Mwavugana n'ishuri niba hari ikosa, cyangwa mushire impamvu yo kubura mu portal y'ababyeyi.
+
+Murakoze,
+{{schoolName}}`,
+    },
+  },
+  {
+    key: 'boarding_return_overdue',
+    name: 'Boarding — overdue return',
+    nameRw: 'Iburiro — gutinda kugaruka',
+    description: 'Alerts guardians when a boarding student has not returned by the approved time.',
+    category: 'risk_and_support',
+    channel: 'whatsapp',
+    en: {
+      subject: 'Boarding return overdue',
+      body: `Dear Parent/Guardian,
+
+{{studentName}} was expected to return to {{dormitoryName}} by {{expectedReturnAt}} from {{movementDestination}}.
+
+The student has not yet been recorded as returned. Please contact the school immediately so we can confirm the student's safety.
+
+Kind regards,
+{{schoolName}}`,
+    },
+    rw: {
+      subject: 'Kugaruka mu buriro bitinze',
+      body: `Mubyeyi/Murera,
+
+{{studentName}} yagombaga kugaruka muri {{dormitoryName}} bitarambiranye na {{expectedReturnAt}} ava {{movementDestination}}.
+
+Ntabwo byanditswe ko yagarutse. Mwaduhamagara vuba mu ishuri kugira ngo twemeze ko umwana ari mutekano.
+
+Murakoze,
+{{schoolName}}`,
+    },
+  },
+  {
+    key: 'boarding_missing_student',
+    name: 'Boarding — missing student escalation',
+    nameRw: 'Iburiro — umunyeshuri wabuze',
+    description: 'Escalation message after a boarding student is reported missing. Limited, non-graphic details.',
+    category: 'risk_and_support',
+    channel: 'whatsapp',
+    en: {
+      subject: 'Urgent boarding welfare notice',
+      body: `Dear Parent/Guardian,
+
+{{studentName}} has been reported missing from {{dormitoryName}} since {{lastSeenAt}} (last approved destination: {{movementDestination}}).
+
+School leadership has been escalated and is coordinating with the appropriate authorities. Please contact the school immediately with any information. This message intentionally omits confidential case details.
+
+Kind regards,
+{{schoolName}}`,
+    },
+    rw: {
+      subject: 'Itangazo ryihutirwa ku mibereho y’umunyeshuri',
+      body: `Mubyeyi/Murera,
+
+{{studentName}} yatangajwe ko yabuze muri {{dormitoryName}} kuva {{lastSeenAt}} (aho yari yemerewe: {{movementDestination}}).
+
+Ubuyobozi bw'ishuri bwamenyeshejwe kandi buri gukorana n'inzego zibifitiye ububasha. Mwaduhamagara vuto mutange amakuru ayo ari yo yose. Ubu butumwa ntibugaragaza amakuru y'ibanga.
+
+Murakoze,
+{{schoolName}}`,
+    },
+  },
+  {
+    key: 'counselling_appointment',
+    name: 'Counselling appointment',
+    nameRw: 'Gahunda y’ubujyanama',
+    description: 'Invites guardians to a student support appointment without disclosing confidential counselling details.',
+    category: 'parent_engagement',
+    channel: 'whatsapp',
+    en: {
+      subject: 'Student support appointment',
+      body: `Dear Parent/Guardian,
+
+{{studentName}} has a student support appointment with our welfare team on {{appointmentDate}} at {{appointmentTime}}.
+
+Location: {{appointmentLocation}}
+
+The school will discuss outcomes only with authorised guardians. Please contact us if you cannot attend or need an alternative time.
+
+Kind regards,
+{{schoolName}}`,
+    },
+    rw: {
+      subject: 'Gahunda y’ubufasha ku munyeshuri',
+      body: `Mubyeyi/Murera,
+
+{{studentName}} afite gahunda y’ubufasha n’itsinda ry’imibereho myiza ku wa {{appointmentDate}} saa {{appointmentTime}}.
+
+Aho biberera: {{appointmentLocation}}
+
+Ishuri rizaganira ku bisubizo gusa n’ababyeyi babifitiye uburenganzira. Mwaduhamagara niba mudashobora kuza cyangwa mushaka undi mwanya.
+
+Murakoze,
+{{schoolName}}`,
+    },
+  },
+  {
+    key: 'detention_scheduled',
+    name: 'Detention scheduled',
+    nameRw: 'Gahunda yo gukumira',
+    description: 'Notifies guardians of a supervised detention session. Scheduling detention never changes conduct marks.',
+    category: 'conduct_notifications',
+    channel: 'whatsapp',
+    en: {
+      subject: 'Detention session scheduled',
+      body: `Dear Parent/Guardian,
+
+{{studentName}} has been assigned a supervised detention session.
+
+Date: {{detentionDate}}
+Time: {{detentionTime}}
+Location: {{detentionLocation}}
+Reason: {{detentionReason}}
+
+Detention is a supervised reflection session. Scheduling it does not change the student's conduct marks. Please contact the school if you have questions.
+
+Kind regards,
+{{schoolName}}`,
+    },
+    rw: {
+      subject: 'Gahunda yo gukumira yashyizweho',
+      body: `Mubyeyi/Murera,
+
+{{studentName}} yahawe igihe cyo gukumira gitegetswe.
+
+Itariki: {{detentionDate}}
+Igihe: {{detentionTime}}
+Aho bizabera: {{detentionLocation}}
+Impamvu: {{detentionReason}}
+
+Gukumira ni igihe cyo gutekereza gitegetswe. Guteganya ntabwo bihindura amanota y’imyitwarire. Mwaduhamagara niba mufite ibibazo.
+
+Murakoze,
+{{schoolName}}`,
+    },
+  },
 ]
 
 // ── 2. Official letter templates (9 types × EN/RW) ──────────────────────────

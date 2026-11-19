@@ -61,7 +61,7 @@ export function riskTone(level?: string) {
 
 export function statusTone(status?: string) {
   const s = (status ?? '').toLowerCase()
-  if (['approved', 'resolved', 'closed', 'completed', 'issued', 'sent', 'active', 'verified', 'synced', 'operational', 'published'].includes(s))
+  if (['approved', 'resolved', 'closed', 'completed', 'issued', 'sent', 'delivered', 'read', 'active', 'verified', 'synced', 'operational', 'published'].includes(s))
     return 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900'
   if (['rejected', 'failed', 'critical', 'dead_letter', 'expelled', 'degraded'].includes(s))
     return 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900'

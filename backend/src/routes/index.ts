@@ -19,6 +19,11 @@ import { reportsRouter } from './reports.routes.js'
 import { adminRouter } from './admin.routes.js'
 import { portalRouter } from './portal.routes.js'
 import { syncRouter } from './sync.routes.js'
+import { attendanceRouter } from './attendance.routes.js'
+import { boardingRouter } from './boarding.routes.js'
+import welfareRouter from './welfare.routes.js'
+import detentionRouter from './detention.routes.js'
+import engagementRouter from './engagement.routes.js'
 
 export const apiRouter = Router()
 
@@ -27,6 +32,10 @@ apiRouter.use(usersRouter)
 apiRouter.use(structureRouter)
 apiRouter.use(studentsRouter)
 apiRouter.use(promotionsRouter)
+apiRouter.use(attendanceRouter)
+apiRouter.use(boardingRouter)
+apiRouter.use(welfareRouter)
+apiRouter.use(detentionRouter)
 apiRouter.use(parentsRouter)
 apiRouter.use(disciplineRouter)
 apiRouter.use(approvalsRouter)
@@ -41,4 +50,5 @@ apiRouter.use(communicationsRouter)
 apiRouter.use(reportsRouter)
 apiRouter.use(adminRouter)
 apiRouter.use(portalRouter)
+apiRouter.use(engagementRouter)
 apiRouter.use(syncRouter)

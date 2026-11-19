@@ -83,8 +83,23 @@ type QueueRow = {
   sentAt?: string
   createdAt: string
   templateKey?: string
+  priority?: number
+  providerMessageId?: string
+  ackStatus?: string
+  deliveredAt?: string
+  readAt?: string
   parentId?: { name?: string } | string
   studentId?: { fullName?: string } | string
+}
+
+type DeliveryAnalytics = {
+  windowDays: number
+  totals: Record<string, number>
+  deliveryRate: number | null
+  readRate: number | null
+  pendingNow: number
+  recentFailures: { channel: string; to: string; templateKey?: string; error?: string; at: string }[]
+  topFailureReasons: { reason: string; count: number }[]
 }
 
 type NotificationTemplateRow = {
@@ -597,6 +612,12 @@ function QueueTab() {
     refetchInterval: 30_000,
   })
 
+  const { data: analytics } = useQuery({
+    queryKey: ['queue-analytics'],
+    queryFn: () => get<DeliveryAnalytics>('/notifications/queue/analytics', { days: 7 }),
+    refetchInterval: 60_000,
+  })
+
   const { data, isLoading } = useQuery({
     queryKey: ['queue', status, channel, page],
     queryFn: () => getPage<QueueRow>('/notifications/queue', { page, pageSize: 25, status: status || undefined, channel: channel || undefined }),
@@ -618,6 +639,17 @@ function QueueTab() {
       success('Message re-queued')
       queryClient.invalidateQueries({ queryKey: ['queue'] })
       queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
+    },
+    onError: (err) => toastError(apiError(err)),
+  })
+
+  const retryDeadLetters = useMutation({
+    mutationFn: () => post<{ requeued: number }>('/notifications/queue/retry-dead-letters', {}),
+    onSuccess: (result) => {
+      success(`${result.requeued} dead-letter message${result.requeued === 1 ? '' : 's'} re-queued`)
+      queryClient.invalidateQueries({ queryKey: ['queue'] })
+      queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['queue-analytics'] })
     },
     onError: (err) => toastError(apiError(err)),
   })
@@ -662,6 +694,46 @@ function QueueTab() {
         <StatCard label="Dead letter" value={s.dead_letter ?? 0} icon={MessageSquare} tone="slate" />
       </div>
 
+      {analytics && (
+        <Card>
+          <CardHeader
+            icon={CheckCheck}
+            title={`Delivery health — last ${analytics.windowDays} days`}
+            subtitle={`${analytics.pendingNow} message${analytics.pendingNow === 1 ? '' : 's'} still in flight`}
+          />
+          <div className="grid gap-3 p-4 sm:grid-cols-3">
+            <StatCard
+              label="Delivery rate"
+              value={analytics.deliveryRate === null ? 'n/a' : `${analytics.deliveryRate}%`}
+              hint="Sent ÷ attempted (sent, failed and dead-lettered)"
+              icon={Send}
+              tone="emerald"
+            />
+            <StatCard
+              label="Read rate"
+              value={analytics.readRate === null ? 'n/a' : `${analytics.readRate}%`}
+              hint="WhatsApp read receipts ÷ sent"
+              icon={CheckCheck}
+              tone="brand"
+            />
+            <StatCard label="Pending now" value={analytics.pendingNow} hint="Queued, sending or awaiting retry" icon={Mail} tone="amber" />
+          </div>
+          {analytics.topFailureReasons.length > 0 && (
+            <div className="border-t border-line px-4 py-3 dark:border-[#1f2f49]">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Most common failures</p>
+              <ul className="mt-2 space-y-1 text-xs">
+                {analytics.topFailureReasons.map((row) => (
+                  <li key={row.reason} className="flex items-start justify-between gap-3">
+                    <span className="text-slate-600 dark:text-slate-300">{row.reason}</span>
+                    <span className="shrink-0 font-semibold text-slate-500">{row.count}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Card>
+      )}
+
       <Card className="flex flex-wrap items-center gap-2 p-4">
         <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} className="sm:w-44">
           <option value="">All statuses</option>
@@ -673,7 +745,17 @@ function QueueTab() {
           <option value="sms">SMS</option>
           <option value="email">Email</option>
         </Select>
-        <Button variant="secondary" icon={Trash2} className="ml-auto" loading={purge.isPending} onClick={() => purge.mutate()}>
+        <Button
+          variant="secondary"
+          icon={RefreshCw}
+          className="ml-auto"
+          loading={retryDeadLetters.isPending}
+          disabled={(s.dead_letter ?? 0) === 0}
+          onClick={() => retryDeadLetters.mutate()}
+        >
+          Retry dead letters
+        </Button>
+        <Button variant="secondary" icon={Trash2} loading={purge.isPending} onClick={() => purge.mutate()}>
           Remove failed SMS/email messages
         </Button>
         <Button variant="secondary" icon={RefreshCw} loading={process.isPending} onClick={() => process.mutate()}>
@@ -693,6 +775,7 @@ function QueueTab() {
                   <th className="px-4 py-3">Channel</th>
                   <th className="px-4 py-3">Template</th>
                   <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Delivery</th>
                   <th className="px-4 py-3">Attempts</th>
                   <th className="px-4 py-3">Created</th>
                   <th className="px-4 py-3" />
@@ -711,6 +794,16 @@ function QueueTab() {
                     <td className="px-4 py-3"><Badge tone="brand">{titleCase(row.channel)}</Badge></td>
                     <td className="px-4 py-3 text-xs text-slate-500">{row.templateKey ?? 'â€”'}</td>
                     <td className="px-4 py-3"><StatusBadge status={row.status} /></td>
+                    <td className="px-4 py-3">
+                      {row.channel === 'whatsapp' && row.ackStatus ? (
+                        <>
+                          <StatusBadge status={row.ackStatus} />
+                          {row.readAt && <p className="mt-1 text-[10px] text-emerald-600 dark:text-emerald-400">read {timeAgo(row.readAt)}</p>}
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-400">{row.deliveredAt ? `delivered ${timeAgo(row.deliveredAt)}` : 'not tracked'}</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-xs">{row.attempts}/{row.maxAttempts}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{formatDateTime(row.createdAt)}</td>
                     <td className="px-4 py-3 text-right">

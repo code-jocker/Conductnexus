@@ -240,6 +240,8 @@ export const NOTIFICATION_CATEGORIES = [
   'meeting',
   'risk',
   'appeal',
+  'welfare',
+  'detention',
   'communication',
   'system',
 ] as const
@@ -298,6 +300,12 @@ export interface IMessageQueue extends Document {
   dedupeKey?: string
   sentAt?: Date
   provider?: string
+  providerMessageId?: string
+  ackStatus?: string
+  deliveredAt?: Date
+  readAt?: Date
+  receipts?: { at: Date; status: string; detail?: string }[]
+  priority?: 'normal' | 'critical'
   createdBy?: Types.ObjectId
   createdAt: Date
 }
@@ -327,11 +335,25 @@ const messageSchema = new Schema<IMessageQueue>(
     dedupeKey: { type: String, unique: true, sparse: true },
     sentAt: { type: Date },
     provider: { type: String },
+    providerMessageId: { type: String },
+    ackStatus: { type: String },
+    deliveredAt: { type: Date },
+    readAt: { type: Date },
+    receipts: [
+      {
+        _id: false,
+        at: { type: Date, default: Date.now },
+        status: { type: String, required: true },
+        detail: String,
+      },
+    ],
+    priority: { type: String, enum: ['normal', 'critical'], default: 'normal' },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 )
 messageSchema.index({ status: 1, nextAttemptAt: 1 })
+messageSchema.index({ providerMessageId: 1 }, { sparse: true })
 export const MessageQueue = model<IMessageQueue>('MessageQueue', messageSchema)
 
 export interface IWhatsappSession extends Document {
