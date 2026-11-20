@@ -525,7 +525,7 @@ export async function startWhatsapp(phoneNumber?: string): Promise<{ status: str
     client.on('qr', async (qr: string) => {
       if (!isCurrent()) return
       try {
-        const dataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 320 })
+        const dataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 224 })
         await persistStatus('qr', { qrDataUrl: dataUrl, lastQrAt: new Date(), lastError: null, pairingCode: null })
       } catch (err) {
         logger.warn({ err }, 'QR generation failed')

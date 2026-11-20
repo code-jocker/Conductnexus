@@ -27,6 +27,7 @@ let shuttingDown = false
 let state = {
   status: 'disconnected',
   qrDataUrl: null,
+  lastQrDataUrl: null,
   pairingCode: null,
   pairingPhone: null,
   lastQrAt: null,
@@ -177,10 +178,11 @@ async function start(phoneNumber) {
   instance.on('qr', async (qr) => {
     if (!isCurrent()) return
     try {
-      const qrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 320 })
+      const qrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 224 })
       setState({
         status: 'qr',
         qrDataUrl,
+        lastQrDataUrl: qrDataUrl,
         lastQrAt: new Date().toISOString(),
         pairingCode: null,
         lastError: null,
@@ -300,7 +302,7 @@ app.get('/qr', (_req, res) => {
   res.json({
     ok: true,
     status: state.status,
-    qrDataUrl: state.status === 'qr' ? state.qrDataUrl : null,
+    qrDataUrl: state.status === 'qr' ? state.qrDataUrl : state.lastQrDataUrl ?? null,
   })
 })
 
