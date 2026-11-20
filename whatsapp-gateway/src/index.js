@@ -1,4 +1,8 @@
 import path from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import fs from 'node:fs'
+import fsp from 'node:fs/promises'
 import express from 'express'
 import QRCode from 'qrcode'
 
@@ -49,6 +53,50 @@ function errorText(err) {
   return err instanceof Error ? err.message : String(err ?? 'Unknown error')
 }
 
+const execFileAsync = promisify(execFile)
+
+/** Kill Chromium processes still holding the WhatsApp session profile. */
+async function reapOrphanedBrowsers() {
+  const profile = path.join(SESSION_DIR, `session-${SESSION_NAME}`)
+  let reaped = 0
+  try {
+    // Remove stale Chromium lock files left by an abrupt exit.
+    const lockFiles = [
+      path.join(profile, 'SingletonLock'),
+      path.join(profile, '.org.chromium.Chromium.lock'),
+      path.join(profile, 'SingletonCookie'),
+    ]
+    for (const lock of lockFiles) {
+      try {
+        await fsp.unlink(lock)
+        reaped += 1
+      } catch {
+        // lock file absent or held — ignore
+      }
+    }
+    const { stdout } = await execFileAsync('pgrep', ['-f', profile], { timeout: 20_000 })
+    const pids = String(stdout)
+      .split(/\r?\n/)
+      .map((line) => Number.parseInt(line.trim(), 10))
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
+    for (const pid of pids) {
+      try {
+        process.kill(pid, 'SIGKILL')
+        reaped += 1
+      } catch (err) {
+        console.warn(`Could not reap orphaned browser ${pid}:`, errorText(err))
+      }
+    }
+    if (reaped > 0) {
+      console.warn(`Cleared ${reaped} orphaned browser items for WhatsApp session`)
+    }
+    return reaped
+  } catch (err) {
+    console.debug('Orphan scan skipped')
+    return 0
+  }
+}
+
 async function retire(current) {
   if (client === current) client = null
   try {
@@ -84,6 +132,10 @@ async function start(phoneNumber) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+
+  // Kill browsers left behind by an abrupt previous exit so the saved link can
+  // be restored instead of demanding a fresh QR scan.
+  await reapOrphanedBrowsers()
 
   const { default: whatsappWeb } = await import('whatsapp-web.js')
   const { Client, LocalAuth } = whatsappWeb
