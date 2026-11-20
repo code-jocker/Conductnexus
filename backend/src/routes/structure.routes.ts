@@ -14,19 +14,45 @@ import { objectId } from './helpers.js'
 const router = Router()
 router.use(authenticate)
 
+// ── In-memory read cache (TTL in ms) ─────────────────────────────────────────
+
+type CacheEntry<T> = { value: T; expiry: number }
+const cache = new Map<string, CacheEntry<unknown>>()
+
+function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  const now = Date.now()
+  const entry = cache.get(key) as CacheEntry<T> | undefined
+  if (entry && now < entry.expiry) return Promise.resolve(entry.value)
+  return fn().then((value) => {
+    cache.set(key, { value, expiry: now + ttlMs })
+    return value
+  })
+}
+
+function invalidateCache(prefix: string) {
+  for (const key of cache.keys()) {
+    if (key.startsWith(prefix)) cache.delete(key)
+  }
+}
+
+const STRUCTURE_CACHE_TTL = 5 * 60_000
+
 const dateField = z.string().trim().min(4)
 
 router.get(
   '/structure/options',
-  asyncHandler(async (req, res) => {
-    const [years, terms, classes, streams, dormitories] = await Promise.all([
-      AcademicYear.find().sort({ startDate: -1 }).lean(),
-      Term.find().sort({ startDate: -1 }).lean(),
-      ClassModel.find({ active: true }).sort({ order: 1, name: 1 }).lean(),
-      Stream.find({ active: true }).sort({ name: 1 }).lean(),
-      Dormitory.find({ active: true }).sort({ name: 1 }).lean(),
-    ])
-    ok(res, { years, terms, classes, streams, dormitories, activeTerm: await getActiveTerm() })
+  asyncHandler(async (_req, res) => {
+    const result = await cached('structure:options', STRUCTURE_CACHE_TTL, async () => {
+      const [years, terms, classes, streams, dormitories] = await Promise.all([
+        AcademicYear.find().sort({ startDate: -1 }).lean(),
+        Term.find().sort({ startDate: -1 }).lean(),
+        ClassModel.find({ active: true }).sort({ order: 1, name: 1 }).lean(),
+        Stream.find({ active: true }).sort({ name: 1 }).lean(),
+        Dormitory.find({ active: true }).sort({ name: 1 }).lean(),
+      ])
+      return { years, terms, classes, streams, dormitories, activeTerm: await getActiveTerm() }
+    })
+    ok(res, result, undefined, 'public, max-age=300')
   }),
 )
 
@@ -86,6 +112,7 @@ router.post(
       )
     }
     await writeAudit({ req, actor: req.auth, action: 'academic_year.created', resourceType: 'AcademicYear', resourceId: String(year._id), after: req.body })
+    await invalidateCache('structure:')
     created(res, year)
   }),
 )
@@ -108,6 +135,7 @@ router.patch(
     if (req.body.endDate) year.endDate = new Date(req.body.endDate)
     await year.save()
     await writeAudit({ req, actor: req.auth, action: 'academic_year.updated', resourceType: 'AcademicYear', resourceId: String(year._id), after: req.body })
+    await invalidateCache('structure:')
     ok(res, year)
   }),
 )
@@ -124,6 +152,7 @@ router.post(
     year.status = 'active'
     await year.save()
     await writeAudit({ req, actor: req.auth, action: 'academic_year.activated', resourceType: 'AcademicYear', resourceId: String(year._id) })
+    await invalidateCache('structure:')
     ok(res, year)
   }),
 )
@@ -165,6 +194,7 @@ router.post(
     }
     const term = await Term.create({ ...req.body, startDate: start, endDate: end })
     await writeAudit({ req, actor: req.auth, action: 'term.created', resourceType: 'Term', resourceId: String(term._id), after: req.body })
+    await invalidateCache('structure:')
     created(res, term)
   }),
 )
@@ -190,6 +220,7 @@ router.patch(
     if (req.body.startingMarks !== undefined) term.startingMarks = req.body.startingMarks
     await term.save()
     await writeAudit({ req, actor: req.auth, action: 'term.updated', resourceType: 'Term', resourceId: String(term._id), after: req.body })
+    await invalidateCache('structure:')
     ok(res, term)
   }),
 )
@@ -228,6 +259,7 @@ router.post(
       resourceId: String(term._id),
       after: { startingMarks: term.startingMarks, allocationsCreated: allocated },
     })
+    await invalidateCache('structure:')
     ok(res, { term, allocatedStudents: allocated })
   }),
 )
@@ -274,6 +306,7 @@ router.post(
       resourceId: String(term._id),
       after: { averageBalance, students: students.length },
     })
+    await invalidateCache('structure:')
     ok(res, term)
   }),
 )
@@ -413,6 +446,7 @@ router.post(
         reconciliationIssues: reconciliation.issues.length,
       },
     })
+    await invalidateCache('structure:')
     created(res, {
       term: nextTerm,
       allocatedStudents: allocated,
@@ -451,6 +485,7 @@ router.post(
     if (await ClassModel.exists({ name: req.body.name })) throw ApiError.conflict('A class with this name already exists')
     const cls = await ClassModel.create(req.body)
     await writeAudit({ req, actor: req.auth, action: 'class.created', resourceType: 'Class', resourceId: String(cls._id), after: req.body })
+    await invalidateCache('structure:')
     created(res, cls)
   }),
 )
@@ -479,6 +514,7 @@ router.patch(
     Object.assign(cls, req.body)
     await cls.save()
     await writeAudit({ req, actor: req.auth, action: 'class.updated', resourceType: 'Class', resourceId: String(cls._id), after: req.body })
+    await invalidateCache('structure:')
     ok(res, cls)
   }),
 )
@@ -504,6 +540,7 @@ router.post(
     }
     const stream = await Stream.create({ ...req.body, code: req.body.code.toUpperCase() })
     await writeAudit({ req, actor: req.auth, action: 'stream.created', resourceType: 'Stream', resourceId: String(stream._id), after: req.body })
+    await invalidateCache('structure:')
     created(res, stream)
   }),
 )
@@ -527,6 +564,7 @@ router.patch(
     Object.assign(stream, req.body)
     await stream.save()
     await writeAudit({ req, actor: req.auth, action: 'stream.updated', resourceType: 'Stream', resourceId: String(stream._id), after: req.body })
+    await invalidateCache('structure:')
     ok(res, stream)
   }),
 )
@@ -555,6 +593,7 @@ router.post(
     }
     const dorm = await Dormitory.create({ ...req.body, code: req.body.code.toUpperCase() })
     await writeAudit({ req, actor: req.auth, action: 'dormitory.created', resourceType: 'Dormitory', resourceId: String(dorm._id), after: req.body })
+    await invalidateCache('structure:')
     created(res, dorm)
   }),
 )
@@ -576,6 +615,7 @@ router.patch(
     Object.assign(dorm, req.body)
     await dorm.save()
     await writeAudit({ req, actor: req.auth, action: 'dormitory.updated', resourceType: 'Dormitory', resourceId: String(dorm._id), after: req.body })
+    await invalidateCache('structure:')
     ok(res, dorm)
   }),
 )

@@ -251,7 +251,10 @@ const studentSchema = new Schema<IStudent>(
   { timestamps: true },
 )
 studentSchema.index({ lastName: 1, firstName: 1 })
-studentSchema.index({ fullName: 'text', studentId: 'text', admissionNumber: 'text' })
+studentSchema.index({ fullName: 'text', studentId: 'text', admissionNumber: 'text', nationalId: 'text' })
+studentSchema.index({ status: 1, classId: 1, lastName: 1 })
+studentSchema.index({ status: 1, riskLevel: 1 })
+studentSchema.index({ status: 1, admissionDate: 1 })
 
 export const Student = model<IStudent>('Student', studentSchema)
 

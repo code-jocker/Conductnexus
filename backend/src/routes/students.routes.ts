@@ -397,18 +397,12 @@ router.get(
       }
     }
     if (q.q) {
-      const rx = searchRegex(q.q)
-      const clauses: Record<string, unknown>[] = [
-        { fullName: rx },
-        { studentId: rx },
-        { admissionNumber: rx },
-        { nationalId: rx },
-      ]
+      const textFilter = { $text: { $search: q.q } }
       if (visibility.$or) {
-        filter.$and = [{ $or: visibility.$or }, { $or: clauses }]
+        filter.$and = [{ $or: visibility.$or }, textFilter]
         delete filter.$or
       } else {
-        filter.$or = clauses
+        filter.$text = { $search: q.q }
       }
     }
     const dir = q.sortDir === 'desc' ? -1 : 1

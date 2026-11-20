@@ -10,7 +10,8 @@ export const asyncHandler =
     Promise.resolve(fn(req, res, next)).catch(next)
   }
 
-export function ok<T>(res: Response, data: T, meta?: unknown) {
+export function ok<T>(res: Response, data: T, meta?: unknown, cacheControl?: string) {
+  if (cacheControl) res.setHeader('Cache-Control', cacheControl)
   return res.json({ success: true, data, ...(meta ? { meta } : {}) })
 }
 

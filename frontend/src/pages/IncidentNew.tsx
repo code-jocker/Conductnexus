@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, CheckCircle2, CloudOff, FileText, MapPin, Paperclip, Search, Send, ShieldAlert, Trash2, UserRound, X } from 'lucide-react'
 import { Alert, Badge, Button, Card, CardHeader, Field, Input, Select, Textarea } from '../components/ui'
-import { api, apiError, get, getPage, post } from '../lib/api'
+import { api, apiError, get, post } from '../lib/api'
 import { useOffences, useStudentSearch } from '../lib/hooks'
 import { newLocalId, saveOfflineDraft } from '../lib/offline'
 import { useToast } from '../components/toast'
@@ -43,21 +43,19 @@ export function IncidentNewPage() {
   const { data: results } = useStudentSearch(studentQuery, studentQuery.length >= 2)
 
   const { data: duplicates } = useQuery({
-    queryKey: ['incident-duplicates', students.map((s) => s.id).join(','), offenceId],
+    queryKey: ['incident-duplicates-batch', students.map((s) => s.id).sort().join(','), offenceId],
     enabled: students.length > 0 && Boolean(offenceId),
     queryFn: async () => {
       const since = new Date()
       since.setDate(since.getDate() - 30)
+      const grouped = await post<Record<string, Array<{ studentName: string; incidentNumber: string; occurredAt: string; status: string }>>>(
+        '/incidents/duplicates/batch',
+        { studentIds: students.map((s) => s.id), offenceId, from: since.toISOString().slice(0, 10) },
+      )
       const matches: { studentName: string; incidentNumber: string; occurredAt: string; status: string }[] = []
       for (const student of students) {
-        const { items } = await getPage<Incident>('/incidents', {
-          studentId: student.id,
-          offenceId,
-          from: since.toISOString().slice(0, 10),
-          pageSize: 5,
-        })
-        for (const item of items) {
-          matches.push({ studentName: student.name, incidentNumber: item.incidentNumber, occurredAt: item.occurredAt, status: item.status })
+        for (const match of grouped[student.id] ?? []) {
+          matches.push(match)
         }
       }
       return matches

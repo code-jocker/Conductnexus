@@ -32,6 +32,27 @@ import { objectId, paginationQuery, searchRegex } from './helpers.js'
 const router = Router()
 router.use(authenticate)
 
+// ── In-memory read cache (TTL in ms) ─────────────────────────────────────────
+
+type CacheEntry<T> = { value: T; expiry: number }
+const offenceCache = new Map<string, CacheEntry<unknown>>()
+
+function cachedOffence<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  const now = Date.now()
+  const entry = offenceCache.get(key) as CacheEntry<T> | undefined
+  if (entry && now < entry.expiry) return Promise.resolve(entry.value)
+  return fn().then((value) => {
+    offenceCache.set(key, { value, expiry: now + ttlMs })
+    return value
+  })
+}
+
+function invalidateOffenceCache() {
+  offenceCache.clear()
+}
+
+const OFFENCES_CACHE_TTL = 5 * 60_000
+
 const incidentListQuery = paginationQuery.extend({
   status: z.string().trim().optional(),
   severity: z.enum(['minor', 'moderate', 'serious', 'critical']).optional(),
@@ -73,7 +94,11 @@ router.get(
       const rx = searchRegex(String(req.query.q))
       filter.$or = [{ name: rx }, { code: rx }, { category: rx }]
     }
-    ok(res, await Offence.find(filter).sort({ category: 1, name: 1 }).lean())
+    const key = `offences:${JSON.stringify(filter)}`
+    const result = await cachedOffence(key, OFFENCES_CACHE_TTL, async () => {
+      return Offence.find(filter).sort({ category: 1, name: 1 }).lean()
+    })
+    ok(res, result, undefined, 'public, max-age=300')
   }),
 )
 
@@ -98,6 +123,7 @@ router.post(
     if (await Offence.exists({ code: req.body.code.toUpperCase() })) throw ApiError.conflict('An offence with this code already exists')
     const offence = await Offence.create({ ...req.body, code: req.body.code.toUpperCase(), createdBy: req.auth!.userId })
     await writeAudit({ req, actor: req.auth, action: 'offence.created', resourceType: 'Offence', resourceId: String(offence._id), after: req.body })
+    await invalidateOffenceCache()
     created(res, offence)
   }),
 )
@@ -137,7 +163,66 @@ router.patch(
       after: changes,
       reason,
     })
+    await invalidateOffenceCache()
     ok(res, offence)
+  }),
+)
+
+// ── Incident duplicate batch check ──────────────────────────────────────────
+
+const batchDuplicateQuery = z.object({
+  studentIds: z.array(objectId).min(1).max(50),
+  offenceId: objectId,
+  from: z.string().trim().optional(),
+})
+
+router.post(
+  '/incidents/duplicates/batch',
+  requirePermission('incidents.view'),
+  validate({ body: batchDuplicateQuery }),
+  asyncHandler(async (req, res) => {
+    const { studentIds, offenceId, from } = req.body
+    const since = from ? new Date(from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    const matches = await Incident.aggregate([
+      {
+        $match: {
+          studentId: { $in: studentIds.map((id: string) => new Types.ObjectId(id)) },
+          offenceId: new Types.ObjectId(offenceId),
+          occurredAt: { $gte: since },
+        },
+      },
+      {
+        $lookup: {
+          from: 'students',
+          localField: 'studentId',
+          foreignField: '_id',
+          as: 'student',
+        },
+      },
+      { $unwind: '$student' },
+      {
+        $project: {
+          studentId: '$studentId',
+          studentName: '$student.fullName',
+          incidentNumber: 1,
+          occurredAt: 1,
+          status: 1,
+        },
+      },
+      { $sort: { occurredAt: -1 } },
+    ])
+    const grouped: Record<string, Array<{ studentName: string; incidentNumber: string; occurredAt: string; status: string }>> = {}
+    for (const m of matches) {
+      const sid = String(m.studentId)
+      if (!grouped[sid]) grouped[sid] = []
+      grouped[sid].push({
+        studentName: m.studentName,
+        incidentNumber: m.incidentNumber,
+        occurredAt: m.occurredAt?.toISOString?.() ?? String(m.occurredAt),
+        status: m.status,
+      })
+    }
+    ok(res, grouped)
   }),
 )
 
