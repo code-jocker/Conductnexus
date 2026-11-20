@@ -1448,13 +1448,13 @@ function WhatsappTab() {
   const { data: status } = useQuery({
     queryKey: ['whatsapp-status'],
     queryFn: () => get<{ status: string; enabled: boolean; settingsEnabled?: boolean; qrDataUrl?: string; pairingCode?: string; pairingPhone?: string; lastConnectedAt?: string; lastError?: string; info?: { pushname?: string; number?: string } }>('/whatsapp/status'),
-    refetchInterval: (status?.status === 'ready' ? 30_000 : 3_000),
+    refetchInterval: (query) => (query.state.data?.status === 'ready' ? 30_000 : 3_000),
   })
 
   const { data: qr } = useQuery({
     queryKey: ['whatsapp-qr'],
     queryFn: () => get<{ status: string; qrDataUrl: string | null; enabled: boolean; lastError?: string }>('/whatsapp/qr'),
-    refetchInterval: (qr?.status === 'qr' ? 3_000 : 15_000),
+    refetchInterval: (query) => (query.state.data?.status === 'qr' ? 3_000 : 15_000),
   })
 
   const connect = useMutation({
