@@ -297,8 +297,6 @@ async function gatewayRequest<T>(pathname: string, init: RequestInit = {}): Prom
 
   throw lastError ?? new Error('WhatsApp gateway request failed after retries')
 }
-  return payload as T
-}
 
 async function refreshGatewaySnapshot(): Promise<GatewaySnapshot | null> {
   const now = Date.now()
