@@ -40,6 +40,42 @@ let cachedStatus = null
 let cachedStatusAt = 0
 const STATUS_CACHE_TTL_MS = 5_000
 
+// ── Simple in-memory rate limiter ────────────────────────────────────────
+const RATE_LIMIT_WINDOW_MS = 60_000
+const RATE_LIMIT_MAX = 40          // requests per window per IP
+const CONNECT_RATE_LIMIT_MAX = 5   // connect attempts per window per IP
+const clients = new Map()          // ip -> { count, windowStart, connectCount }
+
+function clientKey(req) {
+  return req.ip || req.connection?.remoteAddress || 'unknown'
+}
+
+function rateLimit(req, connect = false) {
+  const key = clientKey(req)
+  const now = Date.now()
+  let entry = clients.get(key)
+  if (!entry || now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
+    entry = { count: 0, windowStart: now, connectCount: 0 }
+    clients.set(key, entry)
+  }
+  const max = connect ? CONNECT_RATE_LIMIT_MAX : RATE_LIMIT_MAX
+  if (entry.count >= max) {
+    const retryAfter = Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW_MS - now) / 1000)
+    return { limited: true, retryAfter: Math.max(retryAfter, 1) }
+  }
+  entry.count += 1
+  if (connect) entry.connectCount += 1
+  return { limited: false, retryAfter: 0 }
+}
+
+function cleanupRateLimit() {
+  const now = Date.now()
+  for (const [key, entry] of clients) {
+    if (now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) clients.delete(key)
+  }
+}
+setInterval(cleanupRateLimit, RATE_LIMIT_WINDOW_MS)
+
 function markStale() {
   cachedStatus = null
   cachedStatusAt = 0
@@ -266,6 +302,15 @@ app.use(express.json({ limit: '1mb' }))
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, status: state.status })
+})
+
+app.use((req, res, next) => {
+  const limited = rateLimit(req)
+  if (limited.limited) {
+    res.set('Retry-After', String(limited.retryAfter))
+    return res.status(429).json({ ok: false, error: 'Too many requests', retryAfter: limited.retryAfter })
+  }
+  next()
 })
 
 app.use((req, res, next) => {

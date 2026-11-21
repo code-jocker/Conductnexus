@@ -265,21 +265,38 @@ const GATEWAY_STATUS_CACHE_TTL_MS = 8_000
 
 async function gatewayRequest<T>(pathname: string, init: RequestInit = {}): Promise<T> {
   const base = env.WHATSAPP_GATEWAY_URL.replace(/\/+$/, '')
-  const response = await fetch(`${base}${pathname}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.WHATSAPP_GATEWAY_TOKEN}`,
-      ...(init.headers ?? {}),
-    },
-    // Status is polled every few seconds by the admin UI; keep a dead gateway
-    // from stacking slow requests.
-    signal: AbortSignal.timeout(pathname === '/status' ? 4_000 : 10_000),
-  })
-  const payload = (await response.json().catch(() => null)) as (T & { ok?: boolean; error?: string }) | null
-  if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.error || `WhatsApp gateway returned ${response.status}`)
+  const maxRetries = 3
+  let lastError: unknown = null
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(`${base}${pathname}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${env.WHATSAPP_GATEWAY_TOKEN}`,
+        ...(init.headers ?? {}),
+      },
+      signal: AbortSignal.timeout(pathname === '/status' ? 4_000 : 10_000),
+    })
+
+    // Rate limited — honor Retry-After and retry.
+    if (response.status === 429 && attempt < maxRetries) {
+      const retryAfter = response.headers.get('retry-after')
+      const delayMs = retryAfter ? Number.parseInt(retryAfter, 10) * 1000 : Math.min(1000 * 2 ** attempt, 10_000)
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      lastError = new Error(`WhatsApp gateway rate limited (attempt ${attempt + 1}/${maxRetries + 1})`)
+      continue
+    }
+
+    const payload = (await response.json().catch(() => null)) as (T & { ok?: boolean; error?: string }) | null
+    if (!response.ok || payload?.ok === false) {
+      throw new Error(payload?.error || `WhatsApp gateway returned ${response.status}`)
+    }
+    return payload as T
   }
+
+  throw lastError ?? new Error('WhatsApp gateway request failed after retries')
+}
   return payload as T
 }
 

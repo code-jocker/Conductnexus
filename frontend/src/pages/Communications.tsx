@@ -1448,13 +1448,24 @@ function WhatsappTab() {
   const { data: status } = useQuery({
     queryKey: ['whatsapp-status'],
     queryFn: () => get<{ status: string; enabled: boolean; settingsEnabled?: boolean; qrDataUrl?: string; pairingCode?: string; pairingPhone?: string; lastConnectedAt?: string; lastError?: string; info?: { pushname?: string; number?: string } }>('/whatsapp/status'),
-    refetchInterval: (query) => (query.state.data?.status === 'ready' ? 30_000 : 3_000),
+    refetchInterval: (query) => (query.state.data?.status === 'ready' ? 30_000 : 5_000),
+    retry: (failureCount, error) => {
+      // Back off on rate limiting instead of hammering the gateway.
+      const err = error as { response?: { status?: number } } | null
+      if (err?.response?.status === 429) return false
+      return failureCount < 3
+    },
   })
 
   const { data: qr } = useQuery({
     queryKey: ['whatsapp-qr'],
     queryFn: () => get<{ status: string; qrDataUrl: string | null; enabled: boolean; lastError?: string }>('/whatsapp/qr'),
-    refetchInterval: (query) => (query.state.data?.status === 'qr' ? 3_000 : 15_000),
+    refetchInterval: (query) => (query.state.data?.status === 'qr' ? 5_000 : 15_000),
+    retry: (failureCount, error) => {
+      const err = error as { response?: { status?: number } } | null
+      if (err?.response?.status === 429) return false
+      return failureCount < 3
+    },
   })
 
   const connect = useMutation({
