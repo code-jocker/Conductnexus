@@ -148,9 +148,14 @@ function scheduleReconnect() {
   const delay = Math.min(5_000 * 2 ** reconnectAttempts, RECONNECT_MAX_MS)
   reconnectAttempts += 1
   console.log(`WhatsApp reconnect scheduled in ${delay}ms (attempt ${reconnectAttempts})`)
-  reconnectTimer = setTimeout(() => {
+  reconnectTimer = setTimeout(async () => {
     reconnectTimer = null
-    start().catch((err) => console.error('WhatsApp reconnect failed:', errorText(err)))
+    try {
+      await start()
+    } catch (err) {
+      console.error('WhatsApp reconnect failed:', errorText(err))
+      scheduleReconnect()
+    }
   }, delay)
 }
 
@@ -179,7 +184,7 @@ async function start(phoneNumber) {
 
   const instance = new Client({
     authStrategy: new LocalAuth({ dataPath: SESSION_DIR, clientId: SESSION_NAME }),
-    authTimeoutMs: 300_000,
+    authTimeoutMs: 600_000,
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     ...(pairPhone
@@ -199,6 +204,12 @@ async function start(phoneNumber) {
         '--no-first-run',
         '--no-default-browser-check',
         '--disable-web-security',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--disable-translate',
+        '--hide-scrollbars',
+        '--mute-audio',
+        '--metrics-recording-only',
       ],
       defaultNavigationTimeout: 30_000,
     },
@@ -268,11 +279,20 @@ async function start(phoneNumber) {
     scheduleReconnect()
   })
 
-  instance.initialize().catch(async (err) => {
+  try {
+    await instance.initialize()
+  } catch (err) {
     console.error('WhatsApp initialization failed:', errorText(err))
     if (!isCurrent()) return
     await retire(instance)
     setState({ status: 'failed', lastError: errorText(err) })
+    scheduleReconnect()
+  }
+
+  instance.on('auth_failure', async (message) => {
+    if (!isCurrent()) return
+    await retire(instance)
+    setState({ status: 'auth_failure', lastError: errorText(message) })
     scheduleReconnect()
   })
 
@@ -419,4 +439,9 @@ async function shutdown(signal) {
 
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('SIGINT', () => void shutdown('SIGINT'))
-process.on('unhandledRejection', (err) => console.error('Unhandled rejection:', errorText(err)))
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', errorText(err))
+  if (client && state.status !== 'ready') {
+    scheduleReconnect()
+  }
+})
