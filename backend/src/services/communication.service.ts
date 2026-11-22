@@ -507,8 +507,15 @@ export async function startWhatsapp(phoneNumber?: string): Promise<{ status: str
     const chromeArgs = [
       '--no-sandbox',
       '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-features=IsolateOrigins,site-per-process,DnsOverHttps,AsyncDns',
       '--disable-quic',
-      '--disable-features=DnsOverHttps,AsyncDns',
+      '--no-zygote',
+      '--disable-background-timer-throttling',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-web-security',
     ]
     if (env.WHATSAPP_RESOLVER_IP) {
       chromeArgs.push(`--host-resolver-rules=MAP static.whatsapp.net ${env.WHATSAPP_RESOLVER_IP}`)
@@ -517,14 +524,15 @@ export async function startWhatsapp(phoneNumber?: string): Promise<{ status: str
       authStrategy: new LocalAuth({ dataPath: 'storage/whatsapp-session', clientId: env.WHATSAPP_SESSION }),
       authTimeoutMs: 300_000,
       userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       ...(pairPhone
         ? { pairWithPhoneNumber: { phoneNumber: pairPhone, showNotification: true, intervalMs: 180_000 } }
         : {}),
       puppeteer: {
-        headless: true,
+        headless: 'new',
         executablePath: env.WHATSAPP_EXECUTABLE_PATH || undefined,
         args: chromeArgs,
+        defaultNavigationTimeout: 30_000,
       },
     })
     wa.client = client

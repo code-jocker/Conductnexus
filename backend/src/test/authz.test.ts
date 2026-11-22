@@ -116,8 +116,20 @@ beforeAll(async () => {
   for (const roleKey of ROLE_KEYS) {
     const email = `${roleKey.toLowerCase()}@authz.rw`
     await createUser(email, `Authz ${roleKey}`, roleKey)
-    const res = await request(app).post('/api/v1/auth/login').send({ email, password: PASSWORD })
+    let res = await request(app).post('/api/v1/auth/login').send({ email, password: PASSWORD })
     expect(res.status, `login failed for ${roleKey}`).toBe(200)
+
+    // Privileged roles (ADMIN, HEADTEACHER, IT) require MFA — complete the
+    // 2FA flow using the dev code returned in test mode.
+    if (res.body.data.twoFactorRequired) {
+      const verify = await request(app)
+        .post('/api/v1/auth/2fa/verify')
+        .send({ challenge: res.body.data.challenge, code: res.body.data.devCode })
+      expect(verify.status, `2FA verify failed for ${roleKey}`).toBe(200)
+      res = verify
+    }
+
+    expect(res.body.data.accessToken, `no access token for ${roleKey}`).toBeTruthy()
     tokens[roleKey] = res.body.data.accessToken
   }
 })

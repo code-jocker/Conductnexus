@@ -116,7 +116,10 @@ export function StudentsPage() {
   const [deleteReason, setDeleteReason] = useState('')
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [view, setView] = useState<'table' | 'cards'>('table')
+  const [view, setView] = useState<'table' | 'cards'>(() => {
+    if (typeof window === 'undefined') return 'table'
+    return window.innerWidth < 768 ? 'cards' : 'table'
+  })
 
   const { data, isLoading } = useQuery({
     queryKey: ['students', search, classId, risk, status, gender, boardingStatus, sort, sortDir, includeArchived, page, pageSize],
@@ -348,7 +351,7 @@ export function StudentsPage() {
       <Card className="p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <SearchInput value={q} onChange={(v) => { setQ(v); setPage(1) }} placeholder="Search name, student ID, admission number or national ID…" className="flex-1" />
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:w-[720px]">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             <Select value={classId} onChange={(e) => { setClassId(e.target.value); setPage(1) }}>
               <option value="">All classes</option>
               {structure?.classes.map((c) => (
@@ -547,7 +550,7 @@ export function StudentsPage() {
             </table>
             </div>
           ) : (
-            <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               {students.map((s) => {
                 const id = s.id ?? s._id ?? ''
                 const className = typeof s.classId === 'object' ? s.classId?.name ?? '—' : '—'

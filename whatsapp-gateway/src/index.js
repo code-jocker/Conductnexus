@@ -180,11 +180,13 @@ async function start(phoneNumber) {
   const instance = new Client({
     authStrategy: new LocalAuth({ dataPath: SESSION_DIR, clientId: SESSION_NAME }),
     authTimeoutMs: 300_000,
+    userAgent:
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     ...(pairPhone
       ? { pairWithPhoneNumber: { phoneNumber: pairPhone, showNotification: true, intervalMs: 180_000 } }
       : {}),
     puppeteer: {
-      headless: true,
+      headless: 'new',
       ...(CHROME_PATH ? { executablePath: CHROME_PATH } : {}),
       args: [
         '--no-sandbox',
@@ -192,11 +194,13 @@ async function start(phoneNumber) {
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--disable-features=IsolateOrigins,site-per-process',
-        '--single-process',
         '--no-zygote',
         '--disable-background-timer-throttling',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-web-security',
       ],
-      defaultNavigationTimeout: 20_000,
+      defaultNavigationTimeout: 30_000,
     },
   })
 

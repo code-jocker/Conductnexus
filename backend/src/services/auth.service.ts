@@ -3,7 +3,7 @@ import jwt, { type SignOptions } from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { Types } from 'mongoose'
 import { emailConfigured, env, firebaseConfigured, isProd, whatsappAvailable } from '../config/env.js'
-import { Session, User, getSettings, type IUser, type SessionPlatform } from '../models/core.js'
+import { Session, User, Role, UserRole, getSettings, type IUser, type SessionPlatform } from '../models/core.js'
 import { ApiError } from '../shared/errors.js'
 import { addDays, addMinutes, normalizeRwandaPhone, randomCode, randomToken, sha256 } from '../shared/utils.js'
 import { getUserContext, invalidateUserAccess, type AuthContext } from './rbac.service.js'
@@ -14,6 +14,16 @@ import { logger } from '../shared/logger.js'
 
 export const REFRESH_COOKIE = 'cn_refresh'
 export const REFRESH_COOKIE_PATH = '/api/v1/auth'
+
+/** Roles that must always use MFA regardless of per-user or school-wide settings. */
+export const MFA_REQUIRED_ROLES = new Set(['ADMIN', 'HEADTEACHER', 'IT'])
+
+async function requiresMfaByRole(userId: Types.ObjectId | string): Promise<boolean> {
+  const links = await UserRole.find({ userId }).lean()
+  if (!links.length) return false
+  const roles = await Role.find({ _id: { $in: links.map((l) => l.roleId) } }).lean()
+  return roles.some((r) => MFA_REQUIRED_ROLES.has(r.key))
+}
 
 export const passwordSchema = (value: string): boolean => {
   return value.length >= 10 && /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value)
@@ -245,10 +255,12 @@ export async function loginWithPassword(input: {
   user.lockUntil = undefined
   await user.save()
 
-  // Two-factor is always applied when the account opted in, and school-wide
-  // when settings.security.requireTwoFactor is on. A challenge never issues
-  // tokens, so a stolen password alone cannot start a session.
-  if (user.twoFactorEnabled || settings.security.requireTwoFactor) {
+  // Two-factor is always applied when the account opted in, school-wide when
+  // settings.security.requireTwoFactor is on, and for privileged roles
+  // (ADMIN, HEADTEACHER, IT) regardless of other settings. A challenge never
+  // issues tokens, so a stolen password alone cannot start a session.
+  const roleMandated = await requiresMfaByRole(user._id)
+  if (user.twoFactorEnabled || settings.security.requireTwoFactor || roleMandated) {
     const challenge = signTwoFactorChallenge(user._id)
     const delivery = await issueTwoFactorChallenge(user, input.channel ?? 'email')
     return {
@@ -277,7 +289,7 @@ export async function verifyTwoFactorChallenge(input: {
   const user = await User.findById(userId).select('+twoFactorCodeHash +twoFactorExpires +twoFactorAttempts')
   if (!user) throw ApiError.unauthorized('Account not found')
   if (user.status !== 'active') throw ApiError.forbidden('This account is not active.')
-  if (!user.twoFactorEnabled && !settings.security.requireTwoFactor) {
+  if (!user.twoFactorEnabled && !settings.security.requireTwoFactor && !(await requiresMfaByRole(userId))) {
     throw ApiError.badRequest('Two-factor authentication is not enabled for this account.')
   }
   if (!user.twoFactorCodeHash || !user.twoFactorExpires) {
@@ -325,7 +337,7 @@ export async function resendTwoFactorCode(input: {
   const user = await User.findById(userId).select('+twoFactorCodeSentAt')
   if (!user) throw ApiError.unauthorized('Account not found')
   if (user.status !== 'active') throw ApiError.forbidden('This account is not active.')
-  if (!user.twoFactorEnabled && !settings.security.requireTwoFactor) {
+  if (!user.twoFactorEnabled && !settings.security.requireTwoFactor && !(await requiresMfaByRole(userId))) {
     throw ApiError.badRequest('Two-factor authentication is not enabled for this account.')
   }
   const sentAt = (user as IUser & { twoFactorCodeSentAt?: Date }).twoFactorCodeSentAt
@@ -347,9 +359,10 @@ export async function twoFactorStatus(userId: string | Types.ObjectId): Promise<
 }> {
   const [user, settings] = await Promise.all([User.findById(userId), getSettings()])
   if (!user) throw ApiError.notFound('Account not found')
+  const roleMandated = await requiresMfaByRole(userId)
   return {
     enabled: Boolean(user.twoFactorEnabled),
-    mandatory: Boolean(settings.security.requireTwoFactor),
+    mandatory: Boolean(settings.security.requireTwoFactor || roleMandated),
     channels: twoFactorChannels(user),
     email: user.email,
     phone: user.phone,

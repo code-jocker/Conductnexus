@@ -46,8 +46,14 @@ beforeAll(async () => {
   if (!role) throw new Error('ADMIN role missing')
   await UserRole.create({ userId: user._id, roleId: role._id, assignedAt: new Date() })
 
-  const res = await request(app).post('/api/v1/auth/login').send({ email: 'queue-admin@test.rw', password: PASSWORD })
+  let res = await request(app).post('/api/v1/auth/login').send({ email: 'queue-admin@test.rw', password: PASSWORD })
   expect(res.status, 'login failed').toBe(200)
+  if (res.body.data.twoFactorRequired) {
+    res = await request(app)
+      .post('/api/v1/auth/2fa/verify')
+      .send({ challenge: res.body.data.challenge, code: res.body.data.devCode })
+    expect(res.status).toBe(200)
+  }
   token = res.body.data.accessToken
 })
 

@@ -46,8 +46,14 @@ beforeAll(async () => {
     ['export-teacher@test.rw', 'TEACHER'],
   ] as const) {
     await createUser(email, role)
-    const res = await request(app).post('/api/v1/auth/login').send({ email, password: PASSWORD })
+    let res = await request(app).post('/api/v1/auth/login').send({ email, password: PASSWORD })
     expect(res.status, `login failed for ${email}`).toBe(200)
+    if (res.body.data.twoFactorRequired) {
+      res = await request(app)
+        .post('/api/v1/auth/2fa/verify')
+        .send({ challenge: res.body.data.challenge, code: res.body.data.devCode })
+      expect(res.status).toBe(200)
+    }
     tokens[email] = res.body.data.accessToken
   }
 })

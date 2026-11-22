@@ -431,7 +431,7 @@ export function StudentProfilePage() {
         </div>
       </Card>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
         <StatCard label="Current balance" value={s.currentBalance} icon={ShieldCheck} hint={`${conduct.term?.name ?? 'Term'} · starts at ${conduct.startingMarks}`} tone={s.currentBalance <= 25 ? 'red' : 'brand'} />
         <StatCard label="Total deductions" value={conduct.totalDeductions} icon={TrendingDown} tone="ochre" hint="Approved deductions this term" />
         <StatCard label="Rewards" value={conduct.totalRewards} icon={TrendingUp} tone="emerald" hint="Recognition points restored" />
@@ -465,7 +465,7 @@ export function StudentProfilePage() {
           <div className="space-y-5">
             <Card>
               <CardHeader title="Identity & placement" subtitle="Current registered details" icon={UserRound} actions={perms.canEdit ? <Button size="sm" variant="ghost" icon={Pencil} onClick={openEdit}>Edit</Button> : undefined} />
-              <dl className="grid grid-cols-2 gap-x-6 gap-y-4 p-5 text-sm sm:grid-cols-3">
+              <dl className="grid gap-x-6 gap-y-4 p-5 text-sm grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
                 <Info label="Class" value={data.class?.name} />
                 <Info label="Stream" value={data.stream?.name} />
                 <Info label="Dormitory" value={data.dormitory?.name ?? 'Day student'} />
@@ -727,7 +727,7 @@ export function StudentProfilePage() {
 
       {tab === 'ledger' && (
         <div className="space-y-5">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
             <StatCard label="Starting marks" value={conduct.startingMarks} tone="brand" hint={conduct.term?.name} />
             <StatCard label="Deductions" value={conduct.totalDeductions} tone="ochre" />
             <StatCard label="Rewards" value={conduct.totalRewards} tone="emerald" />

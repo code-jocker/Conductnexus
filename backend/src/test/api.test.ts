@@ -43,7 +43,12 @@ async function createUser(email: string, name: string, roleKey: string) {
 }
 
 async function login(email: string) {
-  const res = await request(app).post('/api/v1/auth/login').send({ email, password: PASSWORD })
+  let res = await request(app).post('/api/v1/auth/login').send({ email, password: PASSWORD })
+  if (res.body.data.twoFactorRequired) {
+    res = await request(app)
+      .post('/api/v1/auth/2fa/verify')
+      .send({ challenge: res.body.data.challenge, code: res.body.data.devCode })
+  }
   expect(res.status).toBe(200)
   tokens[email] = res.body.data.accessToken
 }
@@ -375,16 +380,28 @@ describe('native sessions, devices and revocation', () => {
   let sessionB = ''
 
   async function nativeLogin(email: string, device: typeof deviceA) {
-    const res = await request(app).post('/api/v1/auth/native/login').send({ email, password: PASSWORD, device })
+    let res = await request(app).post('/api/v1/auth/native/login').send({ email, password: PASSWORD, device })
     expect(res.status).toBe(200)
+    if (res.body.data.twoFactorRequired) {
+      res = await request(app)
+        .post('/api/v1/auth/native/2fa/verify')
+        .send({ challenge: res.body.data.challenge, code: res.body.data.devCode, device })
+      expect(res.status).toBe(200)
+    }
     return res.body.data as { accessToken: string; refreshToken: string; sessionId: string }
   }
 
   it('signs in natively without setting a refresh cookie', async () => {
-    const res = await request(app)
+    let res = await request(app)
       .post('/api/v1/auth/native/login')
       .send({ email: 'admin@test.rw', password: PASSWORD, device: deviceA })
     expect(res.status).toBe(200)
+    if (res.body.data.twoFactorRequired) {
+      res = await request(app)
+        .post('/api/v1/auth/native/2fa/verify')
+        .send({ challenge: res.body.data.challenge, code: res.body.data.devCode, device: deviceA })
+      expect(res.status).toBe(200)
+    }
     expect(res.body.data.accessToken).toBeTruthy()
     expect(res.body.data.refreshToken).toBeTruthy()
     expect(res.body.data.sessionId).toBeTruthy()

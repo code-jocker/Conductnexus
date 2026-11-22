@@ -10,6 +10,7 @@ import {
   CalendarCheck2,
   CalendarDays,
   ChevronDown,
+  ChevronUp,
   ClipboardList,
   CloudOff,
   Database,
@@ -46,6 +47,7 @@ import type { Settings } from '../../lib/types'
 import { Footer } from '../Footer'
 import { IconButton } from '../ui'
 import { NotificationsPanel, useUnreadCount } from './NotificationsPanel'
+import { MobileBottomNav } from './MobileBottomNav'
 
 type NavItem = { to: string; label: string; icon: LucideIcon; permission?: string | string[]; roles?: string[] }
 
@@ -312,6 +314,8 @@ export function AppShell() {
       </div>
 
       <NotificationsPanel open={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
+
+      <MobileBottomNav />
     </div>
   )
 }

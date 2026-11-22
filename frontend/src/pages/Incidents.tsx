@@ -137,7 +137,7 @@ export function IncidentsPage() {
       <Card className="p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <SearchInput value={q} onChange={(v) => { setQ(v); setPage(1) }} placeholder="Search incident number, student, offence or description…" className="flex-1" />
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:w-[660px]">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
             <Select value={severity} onChange={(e) => { setSeverity(e.target.value); setPage(1) }}>
               <option value="">All severities</option>
               <option value="minor">Minor</option>

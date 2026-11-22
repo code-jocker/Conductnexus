@@ -181,7 +181,7 @@ export function DashboardPage() {
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
         {stats.map((stat) => (
           <StatCard
             key={stat.label}
@@ -196,7 +196,7 @@ export function DashboardPage() {
       </div>
 
       {widgets.has('trend') && (
-        <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
+        <div className="grid gap-5 md:grid-cols-[1.6fr_1fr]">
           <Card>
             <CardHeader
               title="Incident & deduction trend"
@@ -208,7 +208,7 @@ export function DashboardPage() {
                 </Link>
               }
             />
-            <div className="h-64 px-2 pb-4 pt-2">
+            <div className="h-48 md:h-64 px-2 pb-4 pt-2">
               {isLoading ? (
                 <div className="skeleton h-full w-full" />
               ) : (
@@ -242,7 +242,7 @@ export function DashboardPage() {
           {widgets.has('risk') && (
             <Card>
               <CardHeader title="Risk distribution" subtitle="Students by conduct risk band" icon={AlertTriangle} />
-              <div className="h-48">
+              <div className="h-40 md:h-48">
                 {riskEntries.length ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -278,7 +278,7 @@ export function DashboardPage() {
         </div>
       )}
 
-      <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
+      <div className="grid gap-5 md:grid-cols-[1.6fr_1fr]">
         {widgets.has('recentIncidents') && (
           <Card>
           <CardHeader
@@ -437,7 +437,7 @@ export function DashboardPage() {
       {widgets.has('classAverages') && (
       <Card>
         <CardHeader title="Class conduct averages" subtitle="Average balance by class this term" icon={GraduationCap} />
-        <div className="h-56 px-2 pb-4">
+        <div className="h-48 md:h-56 px-2 pb-4">
           {data?.charts.classAverages?.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data.charts.classAverages} margin={{ top: 10, right: 16, left: -18, bottom: 0 }}>
@@ -471,7 +471,7 @@ export function DashboardPage() {
         widgets.has('recognition') ||
         widgets.has('meetings') ||
         widgets.has('notifications')) && (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
           {widgets.has('users') && (
             <Card>
               <CardHeader title="User accounts" subtitle="Active roles and accounts" icon={Users} actions={<Link to="/users" className="link text-xs font-semibold">Manage</Link>} />

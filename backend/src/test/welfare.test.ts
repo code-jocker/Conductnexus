@@ -51,8 +51,13 @@ async function makeUser(email: string, name: string, roleKey: string) {
 }
 
 async function login(email: string) {
-  const res = await request(app).post('/api/v1/auth/login').send({ email, password: PASSWORD })
-  expect(res.status).toBe(200)
+  let res = await request(app).post('/api/v1/auth/login').send({ email, password: PASSWORD })
+  if (res.body.data.twoFactorRequired) {
+    res = await request(app)
+      .post('/api/v1/auth/2fa/verify')
+      .send({ challenge: res.body.data.challenge, code: res.body.data.devCode })
+    expect(res.status).toBe(200)
+  }
   return res.body.data.accessToken as string
 }
 
