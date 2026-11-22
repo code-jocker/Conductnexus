@@ -151,7 +151,7 @@ This caused `TS1128: Declaration or statement expected`, breaking backend typech
 **Impact:** WhatsApp connect/send/status via the gateway returns "WhatsApp is disabled" or gateway-unavailable errors.
 **Required action (manual, Render dashboard):** Set on `conductnexus-api`:
 - `WHATSAPP_GATEWAY_URL` = `https://conductnexus-whatsapp-gateway.onrender.com`
-- `WHATSAPP_GATEWAY_TOKEN` = `95825e5ba9515d7475f9ea15555e1683dbef363c4546572389ead15c06f32006`
+- `WHATSAPP_GATEWAY_TOKEN` = `<rotated — set manually in Render dashboard, do not commit>`
 Then redeploy `conductnexus-api`.
 
 ### D3 — `ENABLE_WHATSAPP=false` in render.yaml
