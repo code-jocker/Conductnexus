@@ -10,6 +10,7 @@ import { env, isProd } from './config/env.js'
 import { logger } from './shared/logger.js'
 import { apiRouter } from './routes/index.js'
 import { openApiDocument } from './docs/openapi.js'
+import { cspRouter } from './routes/csp.routes.js'
 import { globalLimiter, errorHandler, notFoundHandler } from './middleware/error.js'
 import { databaseState } from './config/db.js'
 
@@ -24,6 +25,24 @@ export function createApp() {
       crossOriginResourcePolicy: { policy: 'same-site' },
     }),
   )
+  // Content-Security-Policy-Report-Only: collect client-side violations before
+  // enforcing. Reports POST to /api/v1/csp-report. Enforcement (switch to the
+  // Content-Security-Policy header) happens once reports show no surprises.
+  app.use((_req, res, next) => {
+    const policy = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "report-uri /api/v1/csp-report",
+    ].join('; ')
+    res.setHeader('Content-Security-Policy-Report-Only', policy)
+    next()
+  })
   // JSON payloads (permissions, dashboards) are mostly text; gzip cuts them
   // by ~80% on the slow mobile links this app is deployed onto.
   app.use(compression())
@@ -82,6 +101,10 @@ export function createApp() {
     res.json(openApiDocument)
   })
   app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openApiDocument as never, { customSiteTitle: 'ConductNexus API' }))
+
+  // CSP reports are sent by browsers without auth tokens, so this route sits
+  // directly on the app (before apiRouter) and requires no authentication.
+  app.use('/api/v1/csp-report', cspRouter)
 
   app.use('/api/v1', globalLimiter, apiRouter)
 

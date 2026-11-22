@@ -120,6 +120,34 @@ describe('service health', () => {
   })
 })
 
+describe('content-security-policy report-only', () => {
+  it('sets Content-Security-Policy-Report-Only on responses', async () => {
+    const res = await request(app).get('/api/v1/health')
+    expect(res.status).toBe(200)
+    expect(res.headers['content-security-policy-report-only']).toBeTruthy()
+    expect(String(res.headers['content-security-policy-report-only'])).toContain(
+      "report-uri /api/v1/csp-report",
+    )
+    expect(String(res.headers['content-security-policy-report-only'])).toContain(
+      "frame-ancestors 'none'",
+    )
+  })
+
+  it('accepts a CSP violation report and returns 204', async () => {
+    const res = await request(app)
+      .post('/api/v1/csp-report')
+      .send({
+        'csp-report': {
+          'document-uri': 'https://example.rw/api/docs',
+          'blocked-uri': 'https://evil.example/rw.js',
+          'violated-directive': "script-src 'self'",
+          'original-policy': "default-src 'self'",
+        },
+      })
+    expect(res.status).toBe(204)
+  })
+})
+
 describe('authentication', () => {
   it('rejects a wrong password', async () => {
     const res = await request(app).post('/api/v1/auth/login').send({ email: 'admin@test.rw', password: 'wrong-password' })
