@@ -722,6 +722,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const ctx = actorOf(req)
     await changePassword(String(ctx.userId), req.body.currentPassword ?? '', req.body.newPassword, ctx.sessionId)
+    res.clearCookie(ADMIN_TRUST_COOKIE, { ...trustedCookieOptions(), maxAge: undefined })
     await writeAudit({ req, actor: ctx, action: 'auth.password_changed', resourceType: 'User', resourceId: String(ctx.userId) })
     ok(res, { message: 'Password updated. Other sessions were signed out.' })
   }),
