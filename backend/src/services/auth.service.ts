@@ -683,7 +683,7 @@ export async function beginEmailChange(userId: string | Types.ObjectId, newEmail
     subject: 'Confirm your new ConductNexus email address',
     html: `<p>Hello ${user.name},</p><p>Confirm your new email address by opening this link:</p><p><a href="${link}">Verify new email</a></p><p>This link expires in 30 minutes. Your current email remains unchanged until verification succeeds.</p>`,
   })
-  if (!result.delivered && isProd) throw ApiError.unavailable('The verification email could not be delivered. Your current email has not been changed; please try again later.')
+  if (!result.delivered && isProd) throw ApiError.badRequest('The verification email could not be delivered. Your current email has not been changed; please try again later.')
 }
 
 export async function verifyEmailChange(token: string): Promise<void> {
