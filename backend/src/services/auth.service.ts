@@ -621,8 +621,9 @@ export async function rotateRefreshToken(input: {
   if (!session) throw ApiError.unauthorized('Session not found. Please sign in again.')
   if (session.revokedAt) {
     await Session.updateMany({ userId: session.userId, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date(), revokedReason: 'token_reuse' } })
+    await revokeAllTrustedDevices(session.userId)
     clearSessionCache()
-    throw ApiError.unauthorized('Session reuse detected. All sessions have been revoked.')
+    throw ApiError.unauthorized('Session reuse detected. All sessions and trusted devices have been revoked.')
   }
   if (session.expiresAt < new Date()) {
     session.revokedAt = new Date()
