@@ -266,7 +266,8 @@ function TrustedDevicesCard() {
           <div key={device._id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line p-2 dark:border-[#26374f]">
             <div className="min-w-0">
               <p className="text-sm font-medium">{device.deviceName}</p>
-              <p className="text-[11px] text-slate-500">Last used: {new Date(device.lastUsedAt).toLocaleString()} · Expires: {new Date(device.expiresAt).toLocaleDateString()}</p>
+              <p className="text-[11px] text-slate-500">Trusted: {new Date(device.createdAt).toLocaleDateString()} · Last used: {new Date(device.lastUsedAt).toLocaleString()} · Expires: {new Date(device.expiresAt).toLocaleDateString()}</p>
+              {device.userAgent && <p className="max-w-xl truncate text-[10px] text-slate-400">{device.userAgent}</p>}
             </div>
             <Button size="sm" variant="ghost" loading={busy} onClick={() => revoke(device._id)}>Revoke</Button>
           </div>
