@@ -32,6 +32,7 @@ import {
   verifyEmailToken,
   resendTwoFactorCode,
   verifyTwoFactorChallenge,
+  twoFactorChallengeUserId,
   type TokenPair,
   type TwoFactorChannel,
 } from '../services/auth.service.js'
@@ -239,6 +240,16 @@ router.post(
         resourceId: result.userId,
         after: { channel: result.channel, delivered: result.delivered },
       })
+      if ((req.cookies as Record<string, string> | undefined)?.[ADMIN_TRUST_COOKIE]) {
+        await writeAudit({
+          req,
+          actor: { userId: new Types.ObjectId(result.userId), name: result.name },
+          action: 'auth.trusted_device_rejected',
+          resourceType: 'User',
+          resourceId: result.userId,
+          after: { reason: 'invalid_or_expired_device_credential' },
+        })
+      }
       return ok(res, twoFactorPayload(result))
     }
     const { tokens, ctx } = result
@@ -459,12 +470,26 @@ router.post(
     }),
   }),
   asyncHandler(async (req, res) => {
-    const result = await verifyTwoFactorChallenge({
-      challenge: req.body.challenge,
-      code: req.body.code,
-      trustDevice: req.body.trustDevice,
-      ...clientMeta(req, undefined, 'web'),
-    })
+    const challengeUserId = twoFactorChallengeUserId(req.body.challenge)
+    let result: Awaited<ReturnType<typeof verifyTwoFactorChallenge>>
+    try {
+      result = await verifyTwoFactorChallenge({
+        challenge: req.body.challenge,
+        code: req.body.code,
+        trustDevice: req.body.trustDevice,
+        ...clientMeta(req, undefined, 'web'),
+      })
+    } catch (error) {
+      const challengedUser = await UserModel.findById(challengeUserId).select('name')
+      await writeAudit({
+        req,
+        actor: { userId: new Types.ObjectId(challengeUserId), name: challengedUser?.name ?? 'Account' },
+        action: 'auth.2fa_failed',
+        resourceType: 'User',
+        resourceId: challengeUserId,
+      })
+      throw error
+    }
     const { tokens, ctx } = result
     setTrustedDeviceCookie(res, result.trustedDeviceToken)
     await writeAudit({ req, actor: ctx, action: 'auth.2fa_verified', resourceType: 'User', resourceId: String(ctx.userId), after: { trustedDevice: Boolean(result.trustedDeviceToken) } })
