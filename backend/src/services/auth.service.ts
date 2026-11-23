@@ -3,7 +3,7 @@ import jwt, { type SignOptions } from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { Types } from 'mongoose'
 import { emailConfigured, env, firebaseConfigured, isProd, whatsappAvailable } from '../config/env.js'
-import { Session, User, Role, UserRole, getSettings, type IUser, type SessionPlatform } from '../models/core.js'
+import { Session, User, Role, UserRole, TrustedDevice, getSettings, type IUser, type SessionPlatform } from '../models/core.js'
 import { ApiError } from '../shared/errors.js'
 import { addDays, addMinutes, normalizeRwandaPhone, randomCode, randomToken, sha256 } from '../shared/utils.js'
 import { getUserContext, invalidateUserAccess, type AuthContext } from './rbac.service.js'
@@ -18,7 +18,7 @@ export const REFRESH_COOKIE_PATH = '/api/v1/auth'
 /** Roles that must always use MFA regardless of per-user or school-wide settings. */
 export const MFA_REQUIRED_ROLES = new Set(['ADMIN', 'HEADTEACHER', 'IT'])
 
-async function requiresMfaByRole(userId: Types.ObjectId | string): Promise<boolean> {
+async function hasAdminRole(userId: Types.ObjectId | string): Promise<boolean> {\n  const links = await UserRole.find({ userId }).lean()\n  if (!links.length) return false\n  const roles = await Role.find({ _id: { $in: links.map((l) => l.roleId) } }).lean()\n  return roles.some((r) => r.key === 'ADMIN')\n}\n\nasync function requiresMfaByRole(userId: Types.ObjectId | string): Promise<boolean> {
   const links = await UserRole.find({ userId }).lean()
   if (!links.length) return false
   const roles = await Role.find({ _id: { $in: links.map((l) => l.roleId) } }).lean()
@@ -114,7 +114,7 @@ export type TwoFactorDelivery = {
 }
 
 export type PasswordLoginResult =
-  | { status: 'authenticated'; tokens: TokenPair; ctx: AuthContext }
+  | { status: 'authenticated'; tokens: TokenPair; ctx: AuthContext; trustedDeviceToken?: string }
   | ({
       status: 'two_factor_required'
       challenge: string
@@ -259,6 +259,27 @@ export async function loginWithPassword(input: {
   // settings.security.requireTwoFactor is on, and for privileged roles
   // (ADMIN, HEADTEACHER, IT) regardless of other settings. A challenge never
   // issues tokens, so a stolen password alone cannot start a session.
+  const adminAccount = await hasAdminRole(user._id)
+  if (adminAccount && input.trustedDeviceToken) {
+    const trusted = await TrustedDevice.findOne({
+      userId: user._id,
+      tokenHash: sha256(input.trustedDeviceToken),
+      revokedAt: { $exists: false },
+      expiresAt: { $gt: new Date() },
+    })
+    if (trusted) {
+      const rotatedToken = randomToken(48)
+      trusted.tokenHash = sha256(rotatedToken)
+      trusted.lastUsedAt = new Date()
+      trusted.expiresAt = addDays(new Date(), 30)
+      await trusted.save()
+      user.lastLoginAt = new Date()
+      await user.save()
+      const tokens = await issueTokens(user, input)
+      const ctx = await getUserContext(user._id)
+      return { status: 'authenticated', tokens, ctx, trustedDeviceToken: rotatedToken }
+    }
+  }
   const roleMandated = await requiresMfaByRole(user._id)
   if (user.twoFactorEnabled || settings.security.requireTwoFactor || roleMandated) {
     const challenge = signTwoFactorChallenge(user._id)
@@ -319,7 +340,19 @@ export async function verifyTwoFactorChallenge(input: {
   await user.save()
   const tokens = await issueTokens(user, input)
   const ctx = await getUserContext(user._id)
-  return { tokens, ctx }
+  let trustedDeviceToken: string | undefined
+  if (input.trustDevice && ctx.roles.includes('ADMIN')) {
+    trustedDeviceToken = randomToken(48)
+    await TrustedDevice.create({
+      userId: user._id,
+      tokenHash: sha256(trustedDeviceToken),
+      deviceName: input.deviceName || 'Trusted browser',
+      userAgent: input.userAgent,
+      lastUsedAt: new Date(),
+      expiresAt: addDays(new Date(), 30),
+    })
+  }
+  return { tokens, ctx, trustedDeviceToken }
 }
 
 /**
@@ -632,6 +665,62 @@ export async function sendVerificationEmail(user: IUser): Promise<{ delivered: b
   }
 }
 
+export async function beginEmailChange(userId: string | Types.ObjectId, newEmailInput: string, password: string): Promise<void> {
+  const newEmail = newEmailInput.trim().toLowerCase()
+  const user = await User.findById(userId).select('+passwordHash')
+  if (!user) throw ApiError.notFound('Account not found')
+  if (!user.passwordHash || !(await verifyPassword(password, user.passwordHash))) throw ApiError.badRequest('Confirm your current password to change your email.')
+  if (newEmail === user.email) throw ApiError.badRequest('That is already your current email address.')
+  if (await User.exists({ email: newEmail })) throw ApiError.conflict('That email address is already used by another account.')
+  const token = randomToken(32)
+  user.pendingEmail = newEmail
+  user.emailChangeTokenHash = sha256(token)
+  user.emailChangeExpires = addMinutes(new Date(), 30)
+  await user.save()
+  const link = `${env.APP_URL}/verify-email-change?token=${token}`
+  const result = await sendMail({
+    to: newEmail,
+    subject: 'Confirm your new ConductNexus email address',
+    html: `<p>Hello ${user.name},</p><p>Confirm your new email address by opening this link:</p><p><a href="${link}">Verify new email</a></p><p>This link expires in 30 minutes. Your current email remains unchanged until verification succeeds.</p>`,
+  })
+  if (!result.delivered && isProd) throw ApiError.unavailable('The verification email could not be delivered. Your current email has not been changed; please try again later.')
+}
+
+export async function verifyEmailChange(token: string): Promise<void> {
+  const user = await User.findOne({
+    emailChangeTokenHash: sha256(token),
+    emailChangeExpires: { $gt: new Date() },
+  }).select('+emailChangeTokenHash +emailChangeExpires +pendingEmail')
+  if (!user || !user.pendingEmail) throw ApiError.badRequest('This email-change link is invalid or has expired.')
+  if (await User.exists({ email: user.pendingEmail, _id: { $ne: user._id } })) throw ApiError.conflict('That email address is now used by another account.')
+  user.email = user.pendingEmail
+  user.emailVerified = true
+  user.pendingEmail = undefined
+  user.emailChangeTokenHash = undefined
+  user.emailChangeExpires = undefined
+  await user.save()
+  await TrustedDevice.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } })
+  await Session.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date(), revokedReason: 'email_changed' } })
+  invalidateUserAccess(String(user._id))
+}
+
+export async function listTrustedDevices(userId: string | Types.ObjectId) {
+  return TrustedDevice.find({ userId, revokedAt: { $exists: false }, expiresAt: { $gt: new Date() } })
+    .select('_id deviceName userAgent createdAt lastUsedAt expiresAt')
+    .sort({ lastUsedAt: -1 })
+    .lean()
+}
+
+export async function revokeTrustedDevice(userId: string | Types.ObjectId, deviceId: string): Promise<void> {
+  if (!Types.ObjectId.isValid(deviceId)) throw ApiError.badRequest('Invalid device identifier.')
+  const result = await TrustedDevice.updateOne({ _id: deviceId, userId, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } })
+  if (!result.matchedCount) throw ApiError.notFound('Trusted device not found.')
+}
+
+export async function revokeAllTrustedDevices(userId: string | Types.ObjectId): Promise<void> {
+  await TrustedDevice.updateMany({ userId, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } })
+}
+
 export async function verifyEmailToken(token: string): Promise<void> {
   const user = await User.findOne({
     emailVerificationTokenHash: sha256(token),
@@ -733,6 +822,7 @@ export async function changePassword(
   user.passwordHash = await hashPassword(newPassword)
   user.mustChangePassword = false
   await user.save()
+  await TrustedDevice.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } })
   invalidateUserAccess(String(user._id))
   await revokeAllSessions(user._id, keepSessionId)
   await sendMail({
