@@ -322,6 +322,7 @@ router.post(
     await revokeAllTrustedDevices(actorOf(req).userId)
     invalidateUserAccess(String(actorOf(req).userId))
     res.clearCookie(REFRESH_COOKIE, { path: '/api/v1/auth' })
+    res.clearCookie(ADMIN_TRUST_COOKIE, { ...trustedCookieOptions(), maxAge: undefined })
     ok(res, { message: 'All sessions revoked' })
   }),
 )
