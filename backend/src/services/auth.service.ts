@@ -127,9 +127,10 @@ export type PasswordLoginResult =
     } & TwoFactorDelivery)
 
 export type GoogleLoginResult =
-  | { status: 'authenticated'; tokens: TokenPair; ctx: AuthContext; isNew: boolean; hasAccess: boolean }
+  | { status: 'authenticated'; tokens: TokenPair; ctx: AuthContext; isNew: boolean; hasAccess: boolean; trustedDeviceToken?: string }
   | ({
       status: 'two_factor_required'
+      canTrustDevice?: boolean
       challenge: string
       userId: string
       name: string
@@ -520,6 +521,7 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<GoogleIden
 export async function loginWithGoogle(input: {
   idToken: string
   channel?: TwoFactorChannel
+  trustedDeviceToken?: string
 } & ClientMeta): Promise<GoogleLoginResult> {
   const identity = await verifyFirebaseIdToken(input.idToken)
   const settings = await getSettings()
@@ -548,13 +550,38 @@ export async function loginWithGoogle(input: {
     })
   }
 
-  // Google proves the identity, but an account (or school policy) that requires
-  // two-factor still has to prove possession of the enrolled channel.
-  if (user.twoFactorEnabled || settings.security.requireTwoFactor) {
+  // Admins can skip email OTP only when this browser presents a valid,
+  // server-recorded trusted-device credential. Google identity is still verified.
+  const adminAccount = await hasAdminRole(user._id)
+  if (adminAccount && input.trustedDeviceToken) {
+    const trusted = await TrustedDevice.findOne({
+      userId: user._id,
+      tokenHash: sha256(input.trustedDeviceToken),
+      revokedAt: { $exists: false },
+      expiresAt: { $gt: new Date() },
+    })
+    if (trusted) {
+      const rotatedToken = randomToken(48)
+      trusted.tokenHash = sha256(rotatedToken)
+      trusted.lastUsedAt = new Date()
+      trusted.expiresAt = addDays(new Date(), 30)
+      await trusted.save()
+      user.lastLoginAt = new Date()
+      await user.save()
+      const tokens = await issueTokens(user, input)
+      const ctx = await getUserContext(user._id)
+      return { status: 'authenticated', tokens, ctx, isNew, hasAccess: ctx.roles.length > 0, trustedDeviceToken: rotatedToken }
+    }
+  }
+
+  // Google proves identity, but privileged roles still require possession of
+  // the enrolled email channel on an untrusted device.
+  if (user.twoFactorEnabled || settings.security.requireTwoFactor || (await requiresMfaByRole(user._id))) {
     const challenge = signTwoFactorChallenge(user._id)
     const delivery = await issueTwoFactorChallenge(user, input.channel ?? 'email')
     return {
       status: 'two_factor_required',
+      canTrustDevice: adminAccount,
       challenge,
       userId: String(user._id),
       name: user.name,
