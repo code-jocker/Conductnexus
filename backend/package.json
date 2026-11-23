@@ -28,7 +28,8 @@
     "setup": "tsx src/scripts/setup.ts",
     "worker": "tsx src/worker.ts",
     "worker:start": "node dist/worker.js",
-    "mail:test": "tsx src/scripts/test-email.ts"
+    "mail:test": "tsx src/scripts/test-email.ts",
+    "prestart": "node dist/scripts/migrate.js run"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
