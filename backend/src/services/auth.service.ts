@@ -308,7 +308,7 @@ export async function loginWithPassword(input: {
   const roleMandated = await requiresMfaByRole(user._id)
   if (user.twoFactorEnabled || settings.security.requireTwoFactor || roleMandated) {
     const challenge = signTwoFactorChallenge(user._id)
-    const delivery = await issueTwoFactorChallenge(user, input.channel ?? 'email')
+    const delivery = await issueTwoFactorChallenge(user, adminAccount ? 'email' : input.channel ?? 'email')
     return {
       status: 'two_factor_required',
       canTrustDevice: adminAccount,
@@ -401,6 +401,7 @@ export async function resendTwoFactorCode(input: {
   if (!user.twoFactorEnabled && !settings.security.requireTwoFactor && !(await requiresMfaByRole(userId))) {
     throw ApiError.badRequest('Two-factor authentication is not enabled for this account.')
   }
+  const adminAccount = await hasAdminRole(user._id)
   const sentAt = (user as IUser & { twoFactorCodeSentAt?: Date }).twoFactorCodeSentAt
   if (sentAt) {
     const waitMs = sentAt.getTime() + env.TWO_FACTOR_RESEND_SECONDS * 1000 - Date.now()
@@ -408,7 +409,7 @@ export async function resendTwoFactorCode(input: {
       throw ApiError.tooMany(`Please wait ${Math.ceil(waitMs / 1000)} seconds before requesting another code.`)
     }
   }
-  return { ...(await issueTwoFactorChallenge(user, input.channel ?? 'email')), userId: String(user._id), name: user.name }
+  return { ...(await issueTwoFactorChallenge(user, adminAccount ? 'email' : input.channel ?? 'email')), userId: String(user._id), name: user.name }
 }
 
 export async function twoFactorStatus(userId: string | Types.ObjectId): Promise<{
@@ -591,7 +592,7 @@ export async function loginWithGoogle(input: {
   // the enrolled email channel on an untrusted device.
   if (user.twoFactorEnabled || settings.security.requireTwoFactor || (await requiresMfaByRole(user._id))) {
     const challenge = signTwoFactorChallenge(user._id)
-    const delivery = await issueTwoFactorChallenge(user, input.channel ?? 'email')
+    const delivery = await issueTwoFactorChallenge(user, adminAccount ? 'email' : input.channel ?? 'email')
     return {
       status: 'two_factor_required',
       canTrustDevice: adminAccount,
