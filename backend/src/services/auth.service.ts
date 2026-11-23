@@ -353,26 +353,57 @@ export async function verifyTwoFactorChallenge(input: {
     await user.save()
     throw ApiError.tooMany('Too many incorrect verification codes. Please sign in again.')
   }
+  const codeHash = user.twoFactorCodeHash
   const provided = sha256(`${user._id}:${input.code.trim()}`)
-  if (!hashEquals(provided, user.twoFactorCodeHash)) {
-    user.twoFactorAttempts = (user.twoFactorAttempts ?? 0) + 1
-    logger.warn({ userId: String(user._id), attempts: user.twoFactorAttempts, ip: input.ip }, 'Two-factor verification failed')
-    await user.save()
+  if (!hashEquals(provided, codeHash)) {
+    // Increment attempts atomically. A read/modify/save sequence allows
+    // parallel requests from different IPs to race past the five-attempt cap.
+    const attemptUpdate = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        twoFactorCodeHash: codeHash,
+        twoFactorExpires: { $gt: new Date() },
+        twoFactorAttempts: { $lt: TWO_FACTOR_MAX_ATTEMPTS },
+      },
+      { $inc: { twoFactorAttempts: 1 } },
+      { new: true },
+    ).select('+twoFactorAttempts')
+    const attempts = attemptUpdate?.twoFactorAttempts ?? TWO_FACTOR_MAX_ATTEMPTS
+    if (attemptUpdate && attempts >= TWO_FACTOR_MAX_ATTEMPTS) {
+      await User.updateOne(
+        { _id: user._id, twoFactorCodeHash: codeHash, twoFactorAttempts: { $gte: TWO_FACTOR_MAX_ATTEMPTS } },
+        { $unset: { twoFactorCodeHash: 1, twoFactorExpires: 1, twoFactorCodeSentAt: 1 }, $set: { twoFactorAttempts: 0 } },
+      )
+    }
+    logger.warn({ userId: String(user._id), attempts, ip: input.ip }, 'Two-factor verification failed')
     throw ApiError.unauthorized('The verification code is incorrect.')
   }
-  user.twoFactorCodeHash = undefined
-  user.twoFactorExpires = undefined
-  user.twoFactorAttempts = 0
-  user.twoFactorCodeSentAt = undefined
-  user.lastLoginAt = new Date()
-  await user.save()
-  const tokens = await issueTokens(user, input)
-  const ctx = await getUserContext(user._id)
+
+  // Consume the code in one conditional database write. Only one concurrent
+  // request can exchange a valid OTP for a session.
+  const verifiedUser = await User.findOneAndUpdate(
+    {
+      _id: user._id,
+      twoFactorCodeHash: codeHash,
+      twoFactorExpires: { $gt: new Date() },
+      twoFactorAttempts: { $lt: TWO_FACTOR_MAX_ATTEMPTS },
+    },
+    {
+      $unset: { twoFactorCodeHash: 1, twoFactorExpires: 1, twoFactorCodeSentAt: 1 },
+      $set: { twoFactorAttempts: 0, lastLoginAt: new Date() },
+    },
+    { new: true },
+  )
+  if (!verifiedUser) {
+    throw ApiError.unauthorized('This verification code has already been used or is no longer valid. Please sign in again.')
+  }
+  const tokens = await issueTokens(verifiedUser, input)
+  const ctx = await getUserContext(verifiedUser._id)
   let trustedDeviceToken: string | undefined
   if (input.trustDevice && ctx.roles.includes('ADMIN')) {
     trustedDeviceToken = randomToken(48)
     await TrustedDevice.create({
-      userId: user._id,
+      userId: verifiedUser._id,
       tokenHash: sha256(trustedDeviceToken),
       deviceName: input.deviceName || 'Trusted browser',
       userAgent: input.userAgent,
