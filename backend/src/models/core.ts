@@ -12,6 +12,9 @@ export interface IUser extends Document {
   emailVerified: boolean
   emailVerificationTokenHash?: string
   emailVerificationExpires?: Date
+  pendingEmail?: string
+  emailChangeTokenHash?: string
+  emailChangeExpires?: Date
   passwordResetCodeHash?: string
   passwordResetTokenHash?: string
   passwordResetExpires?: Date
@@ -45,6 +48,9 @@ const userSchema = new Schema<IUser>(
     emailVerified: { type: Boolean, default: false },
     emailVerificationTokenHash: { type: String, select: false },
     emailVerificationExpires: { type: Date, select: false },
+    pendingEmail: { type: String, lowercase: true, trim: true, select: false },
+    emailChangeTokenHash: { type: String, select: false },
+    emailChangeExpires: { type: Date, select: false },
     passwordResetCodeHash: { type: String, select: false },
     passwordResetTokenHash: { type: String, select: false },
     passwordResetExpires: { type: Date, select: false },
@@ -73,6 +79,9 @@ const userSchema = new Schema<IUser>(
         delete ret.passwordHash
         delete ret.emailVerificationTokenHash
         delete ret.emailVerificationExpires
+        delete ret.pendingEmail
+        delete ret.emailChangeTokenHash
+        delete ret.emailChangeExpires
         delete ret.passwordResetCodeHash
         delete ret.passwordResetTokenHash
         delete ret.passwordResetExpires
@@ -90,6 +99,33 @@ const userSchema = new Schema<IUser>(
 userSchema.index({ status: 1, createdAt: -1 })
 
 export const User = model<IUser>('User', userSchema)
+
+export interface ITrustedDevice extends Document {
+  userId: Types.ObjectId
+  tokenHash: string
+  deviceName: string
+  userAgent?: string
+  createdAt: Date
+  lastUsedAt: Date
+  expiresAt: Date
+  revokedAt?: Date
+}
+
+const trustedDeviceSchema = new Schema<ITrustedDevice>(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    tokenHash: { type: String, required: true, unique: true, select: false },
+    deviceName: { type: String, required: true, maxlength: 120 },
+    userAgent: { type: String, maxlength: 500 },
+    lastUsedAt: { type: Date, required: true },
+    expiresAt: { type: Date, required: true },
+    revokedAt: { type: Date },
+  },
+  { timestamps: { createdAt: true, updatedAt: false } },
+)
+trustedDeviceSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 })
+trustedDeviceSchema.index({ userId: 1, revokedAt: 1, expiresAt: 1 })
+export const TrustedDevice = model<ITrustedDevice>('TrustedDevice', trustedDeviceSchema)
 
 export type SessionPlatform = 'web' | 'android' | 'ios' | 'unknown'
 

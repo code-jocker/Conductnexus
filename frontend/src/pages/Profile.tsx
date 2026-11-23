@@ -5,7 +5,7 @@ import { CheckCircle2, KeyRound, LogOut, MailCheck, MessageCircle, MonitorSmartp
 import { useAuth } from '../lib/auth'
 import { useTheme } from '../lib/theme'
 import { useI18n } from '../lib/i18n'
-import { apiError, get, post } from '../lib/api'
+import { apiError, del, get, post } from '../lib/api'
 import { initials, titleCase } from '../lib/utils'
 import { Alert, Badge, Button, Card, CardHeader, Field, Input, LoadingBlock, PageHeader, Select, StatusBadge } from '../components/ui'
 import { useToast } from '../components/toast'
@@ -101,6 +101,12 @@ export function ProfilePage() {
                 </Button>
               </div>
               <TwoFactorSecurityCard />
+          {me.roles.includes('ADMIN') && (
+            <>
+              <EmailChangeCard currentEmail={me.user.email} />
+              <TrustedDevicesCard />
+            </>
+          )}
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-3 dark:border-[#1f2f49]">
                 <div>
                   <p className="text-sm font-medium">Active sessions</p>
@@ -161,6 +167,112 @@ export function ProfilePage() {
           ))}
         </div>
       </Card>
+    </div>
+  )
+}
+
+
+function EmailChangeCard({ currentEmail }: { currentEmail: string }) {
+  const { success, error: toastError } = useToast()
+  const [newEmail, setNewEmail] = useState('princeshyakaclever@gmail.com')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [sent, setSent] = useState(false)
+
+  async function submit() {
+    setBusy(true)
+    try {
+      const result = await post<{ message: string }>('/auth/change-email', { newEmail, password })
+      success(result.message)
+      setSent(true)
+      setPassword('')
+    } catch (err) {
+      toastError(apiError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-line p-3 dark:border-[#1f2f49]">
+      <p className="text-sm font-medium">Change administrator email</p>
+      <p className="mt-1 text-xs text-slate-500">Current address: {currentEmail}. The new address becomes active only after its owner opens the verification link.</p>
+      <div className="mt-3 grid gap-2">
+        <Field label="New email address">
+          <Input type="email" autoComplete="email" value={newEmail} onChange={(e) => { setNewEmail(e.target.value); setSent(false) }} />
+        </Field>
+        <Field label="Confirm your current password">
+          <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
+        <div>
+          <Button size="sm" loading={busy} disabled={!newEmail.includes('@') || !password} onClick={submit}>Send verification link</Button>
+        </div>
+        {sent && <Alert tone="success" title="Verification email requested">Check the new inbox and open the verification link. Your current address remains active until then.</Alert>}
+      </div>
+    </div>
+  )
+}
+
+type TrustedDeviceItem = {
+  _id: string
+  deviceName: string
+  userAgent?: string
+  createdAt: string
+  lastUsedAt: string
+  expiresAt: string
+}
+
+function TrustedDevicesCard() {
+  const { success, error: toastError } = useToast()
+  const [devices, setDevices] = useState<TrustedDeviceItem[]>([])
+  const [busy, setBusy] = useState(false)
+
+  async function load() {
+    try {
+      const result = await get<{ devices: TrustedDeviceItem[] }>('/auth/trusted-devices')
+      setDevices(result.devices)
+    } catch (err) {
+      toastError(apiError(err))
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  async function revoke(id?: string) {
+    setBusy(true)
+    try {
+      if (id) await del(`/auth/trusted-devices/${id}`)
+      else await del('/auth/trusted-devices')
+      success(id ? 'Trusted device revoked' : 'All trusted devices revoked')
+      await load()
+    } catch (err) {
+      toastError(apiError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-line p-3 dark:border-[#1f2f49]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">Trusted devices</p>
+          <p className="text-xs text-slate-500">These browsers can skip the email code for up to 30 days. Your password is still required.</p>
+        </div>
+        {devices.length > 0 && <Button size="sm" variant="danger" loading={busy} onClick={() => revoke()}>Revoke all</Button>}
+      </div>
+      <div className="mt-3 space-y-2">
+        {devices.length === 0 ? <p className="text-xs text-slate-500">No active trusted devices.</p> : devices.map((device) => (
+          <div key={device._id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line p-2 dark:border-[#26374f]">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">{device.deviceName}</p>
+              <p className="text-[11px] text-slate-500">Trusted: {new Date(device.createdAt).toLocaleDateString()} · Last used: {new Date(device.lastUsedAt).toLocaleString()} · Expires: {new Date(device.expiresAt).toLocaleDateString()}</p>
+              {device.userAgent && <p className="max-w-xl truncate text-[10px] text-slate-400">{device.userAgent}</p>}
+            </div>
+            <Button size="sm" variant="ghost" loading={busy} onClick={() => revoke(device._id)}>Revoke</Button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

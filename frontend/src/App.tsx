@@ -13,6 +13,7 @@ const LoginPage = lazy(() => import('./pages/auth/Login').then((m) => ({ default
 const ForgotPasswordPage = lazy(() => import('./pages/auth/ForgotPassword').then((m) => ({ default: m.ForgotPasswordPage })))
 const ResetPasswordPage = lazy(() => import('./pages/auth/ResetPassword').then((m) => ({ default: m.ResetPasswordPage })))
 const VerifyEmailPage = lazy(() => import('./pages/auth/VerifyEmail').then((m) => ({ default: m.VerifyEmailPage })))
+const VerifyEmailChangePage = lazy(() => import('./pages/auth/VerifyEmailChange').then((m) => ({ default: m.VerifyEmailChangePage })))
 const SetupPage = lazy(() => import('./pages/auth/Setup').then((m) => ({ default: m.SetupPage })))
 const ChangePasswordPage = lazy(() => import('./pages/auth/ChangePassword').then((m) => ({ default: m.ChangePasswordPage })))
 const DashboardPage = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.DashboardPage })))
@@ -109,6 +110,7 @@ export function App() {
                   <Route path="/forgot-password" element={<PublicOnly><ForgotPasswordPage /></PublicOnly>} />
                   <Route path="/reset-password" element={<ResetPasswordPage />} />
                   <Route path="/verify-email" element={<VerifyEmailPage />} />
+                  <Route path="/verify-email-change" element={<VerifyEmailChangePage />} />
                   <Route path="/setup" element={<SetupPage />} />
                   <Route path="/privacy" element={<PrivacyPage />} />
 

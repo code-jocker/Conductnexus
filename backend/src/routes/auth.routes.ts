@@ -9,6 +9,11 @@ import { writeAudit } from '../services/audit.service.js'
 import {
   REFRESH_COOKIE,
   beginTwoFactorEnrollment,
+  beginEmailChange,
+  verifyEmailChange,
+  listTrustedDevices,
+  revokeTrustedDevice,
+  revokeAllTrustedDevices,
   changePassword,
   completeSetup,
   confirmTwoFactorEnrollment,
@@ -27,11 +32,12 @@ import {
   verifyEmailToken,
   resendTwoFactorCode,
   verifyTwoFactorChallenge,
+  twoFactorChallengeUserId,
   type TokenPair,
   type TwoFactorChannel,
 } from '../services/auth.service.js'
 import { getSettings, User as UserModel } from '../models/core.js'
-import { emailConfigured, firebaseConfigured } from '../config/env.js'
+import { emailConfigured, firebaseConfigured, isProd } from '../config/env.js'
 import { invalidateUserAccess } from '../services/rbac.service.js'
 import { requestableRoles } from '../shared/roles.js'
 import { submitAccessRequest } from '../services/access-request.service.js'
@@ -39,6 +45,17 @@ import { listUserSessions, registerPushToken, removePushToken, revokeSession } f
 import { actorOf, passwordField } from './helpers.js'
 
 const router = Router()
+const ADMIN_TRUST_COOKIE = 'cn_admin_trust'
+const trustedCookieOptions = () => ({
+  httpOnly: true,
+  secure: isProd,
+  sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
+  path: '/api/v1/auth',
+  maxAge: 30 * 24 * 60 * 60 * 1000,
+})
+function setTrustedDeviceCookie(res: import('express').Response, token?: string) {
+  if (token) res.cookie(ADMIN_TRUST_COOKIE, token, trustedCookieOptions())
+}
 
 const deviceSchema = z
   .object({
@@ -71,6 +88,7 @@ const channelSchema = z.enum(['email', 'whatsapp']).optional()
  */
 function twoFactorPayload(result: {
   challenge: string
+  canTrustDevice?: boolean
   userId: string
   name: string
   email: string
@@ -84,6 +102,7 @@ function twoFactorPayload(result: {
   return {
     twoFactorRequired: true,
     challenge: result.challenge,
+    canTrustDevice: result.canTrustDevice,
     userId: result.userId,
     name: result.name,
     email: result.email,
@@ -209,6 +228,7 @@ router.post(
       email: req.body.email,
       password: req.body.password,
       channel: req.body.channel,
+      trustedDeviceToken: (req.cookies as Record<string, string> | undefined)?.[ADMIN_TRUST_COOKIE],
       ...clientMeta(req, undefined, 'web'),
     })
     if (result.status === 'two_factor_required') {
@@ -220,9 +240,20 @@ router.post(
         resourceId: result.userId,
         after: { channel: result.channel, delivered: result.delivered },
       })
+      if ((req.cookies as Record<string, string> | undefined)?.[ADMIN_TRUST_COOKIE]) {
+        await writeAudit({
+          req,
+          actor: { userId: new Types.ObjectId(result.userId), name: result.name },
+          action: 'auth.trusted_device_rejected',
+          resourceType: 'User',
+          resourceId: result.userId,
+          after: { reason: 'invalid_or_expired_device_credential' },
+        })
+      }
       return ok(res, twoFactorPayload(result))
     }
     const { tokens, ctx } = result
+    setTrustedDeviceCookie(res, result.trustedDeviceToken)
     await writeAudit({ req, actor: ctx, action: 'auth.login', resourceType: 'User', resourceId: String(ctx.userId) })
     sendTokens(res, tokens, { user: ctx.user, permissions: [...ctx.permissions], roles: ctx.roles })
   }),
@@ -241,6 +272,7 @@ router.post(
     const result = await loginWithGoogle({
       idToken: req.body.idToken,
       channel: req.body.channel,
+      trustedDeviceToken: (req.cookies as Record<string, string> | undefined)?.[ADMIN_TRUST_COOKIE],
       ...clientMeta(req, undefined, 'web'),
     })
     if (result.status === 'two_factor_required') {
@@ -252,9 +284,20 @@ router.post(
         resourceId: result.userId,
         after: { channel: result.channel, method: 'google', delivered: result.delivered },
       })
+      if ((req.cookies as Record<string, string> | undefined)?.[ADMIN_TRUST_COOKIE]) {
+        await writeAudit({
+          req,
+          actor: { userId: new Types.ObjectId(result.userId), name: result.name },
+          action: 'auth.trusted_device_rejected',
+          resourceType: 'User',
+          resourceId: result.userId,
+          after: { reason: 'invalid_or_expired_device_credential', method: 'google' },
+        })
+      }
       return ok(res, twoFactorPayload(result))
     }
     const { tokens, ctx, isNew, hasAccess } = result
+    setTrustedDeviceCookie(res, result.trustedDeviceToken)
     await writeAudit({ req, actor: ctx, action: isNew ? 'auth.google_signup' : 'auth.google_login', resourceType: 'User', resourceId: String(ctx.userId) })
     sendTokens(res, tokens, {
       user: ctx.user,
@@ -297,8 +340,10 @@ router.post(
   authenticate,
   asyncHandler(async (req, res) => {
     await revokeAllSessions(actorOf(req).userId)
+    await revokeAllTrustedDevices(actorOf(req).userId)
     invalidateUserAccess(String(actorOf(req).userId))
     res.clearCookie(REFRESH_COOKIE, { path: '/api/v1/auth' })
+    res.clearCookie(ADMIN_TRUST_COOKIE, { ...trustedCookieOptions(), maxAge: undefined })
     ok(res, { message: 'All sessions revoked' })
   }),
 )
@@ -431,15 +476,43 @@ router.post(
     body: z.object({
       challenge: z.string().min(20),
       code: z.string().trim().length(6),
+      trustDevice: z.boolean().optional().default(false),
     }),
   }),
   asyncHandler(async (req, res) => {
-    const { tokens, ctx } = await verifyTwoFactorChallenge({
-      challenge: req.body.challenge,
-      code: req.body.code,
-      ...clientMeta(req, undefined, 'web'),
-    })
-    await writeAudit({ req, actor: ctx, action: 'auth.2fa_verified', resourceType: 'User', resourceId: String(ctx.userId) })
+    const challengeUserId = twoFactorChallengeUserId(req.body.challenge)
+    let result: Awaited<ReturnType<typeof verifyTwoFactorChallenge>>
+    try {
+      result = await verifyTwoFactorChallenge({
+        challenge: req.body.challenge,
+        code: req.body.code,
+        trustDevice: req.body.trustDevice,
+        ...clientMeta(req, undefined, 'web'),
+      })
+    } catch (error) {
+      const challengedUser = await UserModel.findById(challengeUserId).select('name')
+      await writeAudit({
+        req,
+        actor: { userId: new Types.ObjectId(challengeUserId), name: challengedUser?.name ?? 'Account' },
+        action: 'auth.2fa_failed',
+        resourceType: 'User',
+        resourceId: challengeUserId,
+      })
+      throw error
+    }
+    const { tokens, ctx } = result
+    setTrustedDeviceCookie(res, result.trustedDeviceToken)
+    await writeAudit({ req, actor: ctx, action: 'auth.2fa_verified', resourceType: 'User', resourceId: String(ctx.userId), after: { trustedDevice: Boolean(result.trustedDeviceToken) } })
+    if (result.trustedDeviceToken) {
+      await writeAudit({
+        req,
+        actor: ctx,
+        action: 'auth.trusted_device_registered',
+        resourceType: 'User',
+        resourceId: String(ctx.userId),
+        after: { deviceName: req.headers['user-agent']?.slice(0, 120) ?? 'Trusted browser', expiresInDays: 30 },
+      })
+    }
     sendTokens(res, tokens, { user: ctx.user, permissions: [...ctx.permissions], roles: ctx.roles })
   }),
 )
@@ -669,8 +742,69 @@ router.post(
   asyncHandler(async (req, res) => {
     const ctx = actorOf(req)
     await changePassword(String(ctx.userId), req.body.currentPassword ?? '', req.body.newPassword, ctx.sessionId)
+    res.clearCookie(ADMIN_TRUST_COOKIE, { ...trustedCookieOptions(), maxAge: undefined })
     await writeAudit({ req, actor: ctx, action: 'auth.password_changed', resourceType: 'User', resourceId: String(ctx.userId) })
     ok(res, { message: 'Password updated. Other sessions were signed out.' })
+  }),
+)
+
+router.post(
+  '/change-email',
+  authenticate,
+  authLimiter,
+  validate({ body: z.object({ newEmail: z.string().trim().email(), password: z.string().min(1) }) }),
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    if (!ctx.roles.includes('ADMIN')) throw ApiError.forbidden()
+    await beginEmailChange(ctx.userId, req.body.newEmail, req.body.password)
+    await writeAudit({ req, actor: ctx, action: 'auth.email_change_requested', resourceType: 'User', resourceId: String(ctx.userId), after: { newEmail: req.body.newEmail.trim().toLowerCase() } })
+    ok(res, { message: 'A verification link has been sent to your new email address. Your current email remains active until verification.' })
+  }),
+)
+
+router.post(
+  '/verify-email-change',
+  authLimiter,
+  validate({ body: z.object({ token: z.string().min(10) }) }),
+  asyncHandler(async (req, res) => {
+    const changed = await verifyEmailChange(req.body.token)
+    await writeAudit({ req, actor: { userId: new Types.ObjectId(changed.userId), name: changed.name }, action: 'auth.email_changed', resourceType: 'User', resourceId: changed.userId })
+    ok(res, { message: 'Your email address has been changed and verified. Please sign in again.' })
+  }),
+)
+
+router.get(
+  '/trusted-devices',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    if (!ctx.roles.includes('ADMIN')) throw ApiError.forbidden()
+    ok(res, { devices: await listTrustedDevices(ctx.userId) })
+  }),
+)
+
+router.delete(
+  '/trusted-devices/:id',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    if (!ctx.roles.includes('ADMIN')) throw ApiError.forbidden()
+    await revokeTrustedDevice(ctx.userId, req.params.id)
+    await writeAudit({ req, actor: ctx, action: 'auth.trusted_device_revoked', resourceType: 'TrustedDevice', resourceId: req.params.id })
+    ok(res, { message: 'Trusted device revoked. It will require email verification next time.' })
+  }),
+)
+
+router.delete(
+  '/trusted-devices',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const ctx = actorOf(req)
+    if (!ctx.roles.includes('ADMIN')) throw ApiError.forbidden()
+    await revokeAllTrustedDevices(ctx.userId)
+    res.clearCookie(ADMIN_TRUST_COOKIE, { ...trustedCookieOptions(), maxAge: undefined })
+    await writeAudit({ req, actor: ctx, action: 'auth.trusted_devices_revoked', resourceType: 'User', resourceId: String(ctx.userId) })
+    ok(res, { message: 'All trusted devices have been revoked.' })
   }),
 )
 

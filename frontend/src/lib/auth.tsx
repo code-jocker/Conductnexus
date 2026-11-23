@@ -13,6 +13,7 @@ type LoginResponse = {
   roles?: string[]
   permissions?: string[]
   twoFactorRequired?: boolean
+  canTrustDevice?: boolean
   challenge?: string
   email?: string
   name?: string
@@ -29,6 +30,7 @@ type LoginResponse = {
 
 export type TwoFactorChallenge = {
   challenge: string
+  canTrustDevice?: boolean
   email: string
   name?: string
   channel: TwoFactorChannel
@@ -52,6 +54,7 @@ export type GoogleLoginResult =
 function toChallenge(data: LoginResponse, fallbackEmail: string): TwoFactorChallenge {
   return {
     challenge: data.challenge ?? '',
+    canTrustDevice: Boolean(data.canTrustDevice),
     email: data.email ?? fallbackEmail,
     name: data.name,
     channel: data.channel ?? 'email',
@@ -68,7 +71,7 @@ type AuthValue = {
   loading: boolean
   socket: Socket | null
   login: (email: string, password: string, channel?: TwoFactorChannel) => Promise<LoginResult>
-  verifyTwoFactor: (challenge: string, code: string) => Promise<Me>
+  verifyTwoFactor: (challenge: string, code: string, trustDevice?: boolean) => Promise<Me>
   resendTwoFactor: (challenge: string, channel: TwoFactorChannel) => Promise<TwoFactorDeliveryInfo>
   loginWithGoogle: (channel?: TwoFactorChannel) => Promise<GoogleLoginResult>
   logout: () => Promise<void>
@@ -137,10 +140,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const verifyTwoFactor = useCallback(
-    async (challenge: string, code: string) => {
+    async (challenge: string, code: string, trustDevice = false) => {
       const data = await post<{ accessToken: string; user: Me['user']; roles: string[]; permissions: string[] }>(
         '/auth/2fa/verify',
-        { challenge, code },
+        { challenge, code, trustDevice },
       )
       setToken(data.accessToken)
       const next: Me = { user: data.user, roles: data.roles, permissions: data.permissions }
