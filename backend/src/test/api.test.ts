@@ -7,7 +7,7 @@ import { connectDatabase, disconnectDatabase } from '../config/db.js'
 import { hashPassword } from '../services/auth.service.js'
 import { ensureInitialAllocation } from '../services/ledger.service.js'
 import { seedRbac, seedSchoolDefaults } from '../services/seed.service.js'
-import { Role, Settings, User, UserRole } from '../models/core.js'
+import { Role, Settings, TrustedDevice, User, UserRole } from '../models/core.js'
 import { AcademicYear, ClassModel, Dormitory, GuardianLink, Parent, Student, Term } from '../models/school.js'
 import { Offence, Approval } from '../models/discipline.js'
 import {
@@ -1212,15 +1212,32 @@ describe('administrator trusted-device authentication', () => {
     expect(newDeviceLogin.status).toBe(200)
     expect(newDeviceLogin.body.data.twoFactorRequired).toBe(true)
 
+    const trustedAdmin = await User.findOne({ email: 'trusted-device-admin@test.rw' }).lean()
+    await TrustedDevice.updateMany({ userId: trustedAdmin!._id }, { $set: { expiresAt: new Date(Date.now() - 1000) } })
+    const afterExpiry = await device
+      .post('/api/v1/auth/login')
+      .send({ email: 'trusted-device-admin@test.rw', password: PASSWORD })
+    expect(afterExpiry.status).toBe(200)
+    expect(afterExpiry.body.data.twoFactorRequired).toBe(true)
+
+    const reverified = await device
+      .post('/api/v1/auth/2fa/verify')
+      .send({
+        challenge: afterExpiry.body.data.challenge,
+        code: afterExpiry.body.data.devCode,
+        trustDevice: true,
+      })
+    expect(reverified.status).toBe(200)
+
     const devices = await request(app)
       .get('/api/v1/auth/trusted-devices')
-      .set({ Authorization: `Bearer ${sameDeviceLogin.body.data.accessToken}` })
+      .set({ Authorization: `Bearer ${reverified.body.data.accessToken}` })
     expect(devices.status).toBe(200)
     expect(devices.body.data.devices).toHaveLength(1)
 
     const revoked = await request(app)
       .delete(`/api/v1/auth/trusted-devices/${devices.body.data.devices[0]._id}`)
-      .set({ Authorization: `Bearer ${sameDeviceLogin.body.data.accessToken}` })
+      .set({ Authorization: `Bearer ${reverified.body.data.accessToken}` })
     expect(revoked.status).toBe(200)
 
     const afterRevocation = await device
@@ -1228,5 +1245,25 @@ describe('administrator trusted-device authentication', () => {
       .send({ email: 'trusted-device-admin@test.rw', password: PASSWORD })
     expect(afterRevocation.status).toBe(200)
     expect(afterRevocation.body.data.twoFactorRequired).toBe(true)
+
+    const trustedAgain = await device
+      .post('/api/v1/auth/2fa/verify')
+      .send({
+        challenge: afterRevocation.body.data.challenge,
+        code: afterRevocation.body.data.devCode,
+        trustDevice: true,
+      })
+    expect(trustedAgain.status).toBe(200)
+
+    const changedPassword = await device
+      .post('/api/v1/auth/change-password')
+      .send({ currentPassword: PASSWORD, newPassword: 'NewSecurePass2026' })
+    expect(changedPassword.status).toBe(200)
+
+    const afterPasswordChange = await device
+      .post('/api/v1/auth/login')
+      .send({ email: 'trusted-device-admin@test.rw', password: 'NewSecurePass2026' })
+    expect(afterPasswordChange.status).toBe(200)
+    expect(afterPasswordChange.body.data.twoFactorRequired).toBe(true)
   })
 })
