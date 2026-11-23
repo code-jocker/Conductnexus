@@ -690,7 +690,7 @@ export async function beginEmailChange(userId: string | Types.ObjectId, newEmail
   if (!result.delivered && isProd) throw ApiError.badRequest('The verification email could not be delivered. Your current email has not been changed; please try again later.')
 }
 
-export async function verifyEmailChange(token: string): Promise<void> {
+export async function verifyEmailChange(token: string): Promise<{ userId: string; name: string }> {
   const user = await User.findOne({
     emailChangeTokenHash: sha256(token),
     emailChangeExpires: { $gt: new Date() },
@@ -706,6 +706,7 @@ export async function verifyEmailChange(token: string): Promise<void> {
   await TrustedDevice.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } })
   await Session.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date(), revokedReason: 'email_changed' } })
   invalidateUserAccess(String(user._id))
+  return { userId: String(user._id), name: user.name }
 }
 
 export async function listTrustedDevices(userId: string | Types.ObjectId) {
