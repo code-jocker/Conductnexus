@@ -1257,6 +1257,7 @@ describe('administrator trusted-device authentication', () => {
 
     const changedPassword = await device
       .post('/api/v1/auth/change-password')
+      .set({ Authorization: `Bearer ${trustedAgain.body.data.accessToken}` })
       .send({ currentPassword: PASSWORD, newPassword: 'NewSecurePass2026' })
     expect(changedPassword.status).toBe(200)
 
