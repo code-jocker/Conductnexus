@@ -284,6 +284,16 @@ router.post(
         resourceId: result.userId,
         after: { channel: result.channel, method: 'google', delivered: result.delivered },
       })
+      if ((req.cookies as Record<string, string> | undefined)?.[ADMIN_TRUST_COOKIE]) {
+        await writeAudit({
+          req,
+          actor: { userId: new Types.ObjectId(result.userId), name: result.name },
+          action: 'auth.trusted_device_rejected',
+          resourceType: 'User',
+          resourceId: result.userId,
+          after: { reason: 'invalid_or_expired_device_credential', method: 'google' },
+        })
+      }
       return ok(res, twoFactorPayload(result))
     }
     const { tokens, ctx, isNew, hasAccess } = result
