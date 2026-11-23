@@ -16,9 +16,9 @@ services:
       - key: NODE_ENV
         value: production
       - key: APP_URL
-        value: https://e-visitors-d4830.web.app
+        value: https://www.conductnexus.linkpc.net
       - key: CORS_ORIGIN
-        value: https://e-visitors-d4830.web.app,https://e-visitors-d4830.firebaseapp.com,https://www.conductnexus.linkpc.net
+        value: https://e-visitors-d4830.web.app,https://e-visitors-d4830.firebaseapp.com,https://www.conductnexus.linkpc.net,https://conductnexus.linkpc.net
       - key: MONGODB_URI
         sync: false
       - key: JWT_ACCESS_SECRET
