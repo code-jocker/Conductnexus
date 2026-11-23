@@ -18,7 +18,14 @@ export const REFRESH_COOKIE_PATH = '/api/v1/auth'
 /** Roles that must always use MFA regardless of per-user or school-wide settings. */
 export const MFA_REQUIRED_ROLES = new Set(['ADMIN', 'HEADTEACHER', 'IT'])
 
-async function hasAdminRole(userId: Types.ObjectId | string): Promise<boolean> {\n  const links = await UserRole.find({ userId }).lean()\n  if (!links.length) return false\n  const roles = await Role.find({ _id: { $in: links.map((l) => l.roleId) } }).lean()\n  return roles.some((r) => r.key === 'ADMIN')\n}\n\nasync function rotateTrustedDevice(userId: Types.ObjectId | string, rawToken: string): Promise<string | null> {
+async function hasAdminRole(userId: Types.ObjectId | string): Promise<boolean> {
+  const links = await UserRole.find({ userId }).lean()
+  if (!links.length) return false
+  const roles = await Role.find({ _id: { $in: links.map((l) => l.roleId) } }).lean()
+  return roles.some((r) => r.key === 'ADMIN')
+}
+
+async function rotateTrustedDevice(userId: Types.ObjectId | string, rawToken: string): Promise<string | null> {
   const nextToken = randomToken(48)
   const updated = await TrustedDevice.findOneAndUpdate(
     {
