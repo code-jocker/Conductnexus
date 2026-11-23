@@ -463,7 +463,7 @@ router.post(
     })
     const { tokens, ctx } = result
     setTrustedDeviceCookie(res, result.trustedDeviceToken)
-    await writeAudit({ req, actor: ctx, action: 'auth.2fa_verified', resourceType: 'User', resourceId: String(ctx.userId) })
+    await writeAudit({ req, actor: ctx, action: 'auth.2fa_verified', resourceType: 'User', resourceId: String(ctx.userId), after: { trustedDevice: Boolean(result.trustedDeviceToken) } })
     sendTokens(res, tokens, { user: ctx.user, permissions: [...ctx.permissions], roles: ctx.roles })
   }),
 )
@@ -716,7 +716,8 @@ router.post(
   authLimiter,
   validate({ body: z.object({ token: z.string().min(10) }) }),
   asyncHandler(async (req, res) => {
-    await verifyEmailChange(req.body.token)
+    const changed = await verifyEmailChange(req.body.token)
+    await writeAudit({ req, actor: { userId: new Types.ObjectId(changed.userId), name: changed.name }, action: 'auth.email_changed', resourceType: 'User', resourceId: changed.userId })
     ok(res, { message: 'Your email address has been changed and verified. Please sign in again.' })
   }),
 )
