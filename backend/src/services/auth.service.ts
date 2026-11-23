@@ -230,6 +230,7 @@ export async function loginWithPassword(input: {
   email: string
   password: string
   channel?: TwoFactorChannel
+  trustedDeviceToken?: string
 } & ClientMeta): Promise<PasswordLoginResult> {
   const settings = await getSettings()
   const email = input.email.trim().toLowerCase()
@@ -306,7 +307,8 @@ export async function loginWithPassword(input: {
 export async function verifyTwoFactorChallenge(input: {
   challenge: string
   code: string
-} & ClientMeta): Promise<{ tokens: TokenPair; ctx: AuthContext }> {
+  trustDevice?: boolean
+} & ClientMeta): Promise<{ tokens: TokenPair; ctx: AuthContext; trustedDeviceToken?: string }> {
   const userId = userIdFromTwoFactorChallenge(input.challenge)
   const settings = await getSettings()
   const user = await User.findById(userId).select('+twoFactorCodeHash +twoFactorExpires +twoFactorAttempts')
