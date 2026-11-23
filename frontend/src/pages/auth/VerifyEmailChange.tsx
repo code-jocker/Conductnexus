@@ -17,8 +17,8 @@ export function VerifyEmailChangePage() {
       setMessage('This email-change link is missing its token.')
       return
     }
-    post('/auth/verify-email-change', { token })
-      .then((result: { message?: string }) => {
+    post<{ message?: string }>('/auth/verify-email-change', { token })
+      .then((result) => {
         setState('success')
         setMessage(result.message ?? 'Your email address has been changed and verified. Please sign in again.')
       })
