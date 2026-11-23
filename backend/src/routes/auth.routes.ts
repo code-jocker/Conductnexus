@@ -87,6 +87,7 @@ const channelSchema = z.enum(['email', 'whatsapp']).optional()
  */
 function twoFactorPayload(result: {
   challenge: string
+  canTrustDevice?: boolean
   userId: string
   name: string
   email: string
@@ -100,6 +101,7 @@ function twoFactorPayload(result: {
   return {
     twoFactorRequired: true,
     challenge: result.challenge,
+    canTrustDevice: result.canTrustDevice,
     userId: result.userId,
     name: result.name,
     email: result.email,
