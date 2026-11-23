@@ -261,6 +261,7 @@ router.post(
     const result = await loginWithGoogle({
       idToken: req.body.idToken,
       channel: req.body.channel,
+      trustedDeviceToken: (req.cookies as Record<string, string> | undefined)?.[ADMIN_TRUST_COOKIE],
       ...clientMeta(req, undefined, 'web'),
     })
     if (result.status === 'two_factor_required') {
@@ -275,6 +276,7 @@ router.post(
       return ok(res, twoFactorPayload(result))
     }
     const { tokens, ctx, isNew, hasAccess } = result
+    setTrustedDeviceCookie(res, result.trustedDeviceToken)
     await writeAudit({ req, actor: ctx, action: isNew ? 'auth.google_signup' : 'auth.google_login', resourceType: 'User', resourceId: String(ctx.userId) })
     sendTokens(res, tokens, {
       user: ctx.user,
