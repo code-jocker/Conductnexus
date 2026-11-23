@@ -498,3 +498,5 @@ One backend, one MongoDB database and one set of discipline rules serve three cl
 <p align="center"><strong>ConductNexus</strong> — discipline with due process, dignity and data protection.</p>
 
 <p align="center">Powered by Shyaka clever prince a.k.a Code jocker</p>
+#   t r i g g e r   r e d e p l o y  
+ 
