@@ -30,6 +30,7 @@ export function LoginPage() {
   const [status, setStatus] = useState<SetupStatus | null>(null)
   const [twoFactor, setTwoFactor] = useState<TwoFactorChallenge | null>(null)
   const [code, setCode] = useState('')
+  const [trustDevice, setTrustDevice] = useState(true)
   const [requestOpen, setRequestOpen] = useState(false)
 
   useEffect(() => {
@@ -85,7 +86,7 @@ export function LoginPage() {
     setError(null)
     setBusy(true)
     try {
-      const me = await verifyTwoFactor(twoFactor.challenge, code.trim())
+      const me = await verifyTwoFactor(twoFactor.challenge, code.trim(), trustDevice)
       success(`Welcome back, ${me.user.name.split(' ')[0]}`)
       navigate(me.user.mustChangePassword ? '/change-password' : from, { replace: true })
     } catch (err) {
@@ -160,6 +161,7 @@ export function LoginPage() {
           <div className="flex items-start gap-3 rounded-lg border border-line bg-slate-50 p-3 text-sm text-slate-600 dark:border-[#26374f] dark:bg-[#101d33] dark:text-slate-300">
             <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-brand-600 dark:text-brand-300" />
             <div className="space-y-1">
+              <p className="font-semibold">New device verification</p>
               <p>
                 We sent a 6-digit verification code to{' '}
                 <span className="font-semibold">{twoFactor.maskedDestination}</span> by{' '}
@@ -189,6 +191,20 @@ export function LoginPage() {
               />
             </div>
           </Field>
+          {twoFactor.canTrustDevice && (
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-3 text-sm dark:border-[#26374f]">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-brand-600"
+                checked={trustDevice}
+                onChange={(e) => setTrustDevice(e.target.checked)}
+              />
+              <span>
+                <span className="block font-medium text-slate-700 dark:text-slate-200">Trust this device for 30 days</span>
+                <span className="block text-xs text-slate-500">Only select this on a private device you control. Your password is still required on every sign-in.</span>
+              </span>
+            </label>
+          )}
           <Button type="submit" loading={busy} className="w-full" icon={ArrowRight}>
             Verify and sign in
           </Button>
