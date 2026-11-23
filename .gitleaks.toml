@@ -2,7 +2,6 @@
   id = "whatsapp-gateway-token"
   description = "WhatsApp gateway bearer token"
   regex = '''WHATSAPP_GATEWAY_TOKEN\s*[:=]\s*['"]?[0-9a-f]{64}['"]?'''
-  secretGroup = 2
 
 [[rules]]
   id = "generic-api-key"
@@ -22,7 +21,7 @@
   regex = '''(?i)(BACKUP_ENCRYPTION_KEY|EVIDENCE_ENCRYPTION_KEY)\s*[:=]\s*['"]?[A-Za-z0-9+/=]{32,}['"]?'''
   secretGroup = 2
 
-[[allowlist]]
+[allowlist]
   id = "placeholder-values"
   description = "Placeholder example values that are not real secrets"
-  regex = '''PASTE_THE_64_CHARACTER_TOKEN|ci-only-secret-value|example\.com|your-secret-here'''
+  regexes = ['''PASTE_THE_64_CHARACTER_TOKEN|ci-only-secret-value|example\.com|your-secret-here''']
