@@ -30,7 +30,7 @@ export function LoginPage() {
   const [status, setStatus] = useState<SetupStatus | null>(null)
   const [twoFactor, setTwoFactor] = useState<TwoFactorChallenge | null>(null)
   const [code, setCode] = useState('')
-  const [trustDevice, setTrustDevice] = useState(true)
+  const [trustDevice, setTrustDevice] = useState(false)
   const [requestOpen, setRequestOpen] = useState(false)
 
   useEffect(() => {
