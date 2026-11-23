@@ -1211,8 +1211,17 @@ describe('administrator trusted-device authentication', () => {
       .send({ email: 'trusted-device-admin@test.rw', password: PASSWORD })
     expect(newDeviceLogin.status).toBe(200)
     expect(newDeviceLogin.body.data.twoFactorRequired).toBe(true)
+    const newDeviceVerified = await request(app)
+      .post('/api/v1/auth/2fa/verify')
+      .send({
+        challenge: newDeviceLogin.body.data.challenge,
+        code: newDeviceLogin.body.data.devCode,
+      })
+    expect(newDeviceVerified.status).toBe(200)
 
-    const trustedAdmin = await User.findOne({ email: 'trusted-device-admin@test.rw' }).lean()
+    const trustedAdmin = await User.findOne({ email: 'trusted-device-admin@test.rw' })
+    trustedAdmin!.twoFactorCodeSentAt = new Date(Date.now() - 120_000)
+    await trustedAdmin!.save()
     await TrustedDevice.updateMany({ userId: trustedAdmin!._id }, { $set: { expiresAt: new Date(Date.now() - 1000) } })
     const afterExpiry = await device
       .post('/api/v1/auth/login')
