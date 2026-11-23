@@ -798,6 +798,7 @@ export async function resetPassword(input: {
   user.lockUntil = undefined
   user.emailVerified = true
   await user.save()
+  await TrustedDevice.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } })
   await revokeAllSessions(user._id)
   await sendMail({
     to: user.email,
