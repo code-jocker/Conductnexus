@@ -33,6 +33,7 @@ const file = (name: string, checksum: string): MigrationFile => ({
 beforeAll(async () => {
   await connectDatabase()
   await Migration.deleteMany({})
+  await Promise.all(Object.values(mongoose.models).map((model) => model.init()))
   // The imported discipline model declares clientSubmissionId_1 as unique,
   // while the historical baseline migration intentionally creates it sparse
   // but non-unique. Remove the model-created test index so the migration can
