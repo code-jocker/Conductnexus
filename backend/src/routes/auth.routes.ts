@@ -36,7 +36,7 @@ import {
   type TwoFactorChannel,
 } from '../services/auth.service.js'
 import { getSettings, User as UserModel } from '../models/core.js'
-import { emailConfigured, firebaseConfigured } from '../config/env.js'
+import { emailConfigured, firebaseConfigured, isProd } from '../config/env.js'
 import { invalidateUserAccess } from '../services/rbac.service.js'
 import { requestableRoles } from '../shared/roles.js'
 import { submitAccessRequest } from '../services/access-request.service.js'
@@ -47,8 +47,8 @@ const router = Router()
 const ADMIN_TRUST_COOKIE = 'cn_admin_trust'
 const trustedCookieOptions = () => ({
   httpOnly: true,
-  secure: true,
-  sameSite: 'none' as const,
+  secure: isProd,
+  sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
   path: '/api/v1/auth',
   maxAge: 30 * 24 * 60 * 60 * 1000,
 })
