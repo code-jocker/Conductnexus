@@ -164,6 +164,10 @@ function signTwoFactorChallenge(userId: Types.ObjectId | string): string {
   return jwt.sign({ sub: String(userId), typ: '2fa' }, env.JWT_ACCESS_SECRET, { expiresIn: `${TWO_FACTOR_TTL_MINUTES}m` })
 }
 
+export function twoFactorChallengeUserId(token: string): string {
+  return userIdFromTwoFactorChallenge(token)
+}
+
 function userIdFromTwoFactorChallenge(token: string): string {
   try {
     const payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as { sub?: string; typ?: string }
@@ -345,6 +349,7 @@ export async function verifyTwoFactorChallenge(input: {
   const provided = sha256(`${user._id}:${input.code.trim()}`)
   if (!hashEquals(provided, user.twoFactorCodeHash)) {
     user.twoFactorAttempts = (user.twoFactorAttempts ?? 0) + 1
+    logger.warn({ userId: String(user._id), attempts: user.twoFactorAttempts, ip: input.ip }, 'Two-factor verification failed')
     await user.save()
     throw ApiError.unauthorized('The verification code is incorrect.')
   }
