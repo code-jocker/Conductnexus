@@ -69,6 +69,7 @@ beforeAll(async () => {
   await createUser('headteacher@test.rw', 'Test Headteacher', 'HEADTEACHER')
   await createUser('teacher@test.rw', 'Test Teacher', 'TEACHER')
   await createUser('parent@test.rw', 'Test Parent', 'PARENT')
+  await createUser('trusted-device-admin@test.rw', 'Trusted Device Administrator', 'ADMIN')
 
   const [year, term, cls, offence] = await Promise.all([
     AcademicYear.findOne({ isActive: true }).lean(),
@@ -1175,3 +1176,57 @@ describe('placeholder safety and template administration', () => {
   })
 })
 
+
+
+describe('administrator trusted-device authentication', () => {
+  it('requires OTP on a new device, skips it on the trusted device, and requires it again after revocation', async () => {
+    const device = request.agent(app)
+
+    const firstLogin = await device
+      .post('/api/v1/auth/login')
+      .send({ email: 'trusted-device-admin@test.rw', password: PASSWORD })
+    expect(firstLogin.status).toBe(200)
+    expect(firstLogin.body.data.twoFactorRequired).toBe(true)
+    expect(firstLogin.body.data.devCode).toBeTruthy()
+
+    const verified = await device
+      .post('/api/v1/auth/2fa/verify')
+      .send({
+        challenge: firstLogin.body.data.challenge,
+        code: firstLogin.body.data.devCode,
+        trustDevice: true,
+      })
+    expect(verified.status).toBe(200)
+    expect(verified.headers['set-cookie']?.some((cookie: string) => cookie.startsWith('cn_admin_trust='))).toBe(true)
+
+    const sameDeviceLogin = await device
+      .post('/api/v1/auth/login')
+      .send({ email: 'trusted-device-admin@test.rw', password: PASSWORD })
+    expect(sameDeviceLogin.status).toBe(200)
+    expect(sameDeviceLogin.body.data.twoFactorRequired).not.toBe(true)
+    expect(sameDeviceLogin.body.data.accessToken).toBeTruthy()
+
+    const newDeviceLogin = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ email: 'trusted-device-admin@test.rw', password: PASSWORD })
+    expect(newDeviceLogin.status).toBe(200)
+    expect(newDeviceLogin.body.data.twoFactorRequired).toBe(true)
+
+    const devices = await request(app)
+      .get('/api/v1/auth/trusted-devices')
+      .set({ Authorization: `Bearer ${sameDeviceLogin.body.data.accessToken}` })
+    expect(devices.status).toBe(200)
+    expect(devices.body.data.devices).toHaveLength(1)
+
+    const revoked = await request(app)
+      .delete(`/api/v1/auth/trusted-devices/${devices.body.data.devices[0]._id}`)
+      .set({ Authorization: `Bearer ${sameDeviceLogin.body.data.accessToken}` })
+    expect(revoked.status).toBe(200)
+
+    const afterRevocation = await device
+      .post('/api/v1/auth/login')
+      .send({ email: 'trusted-device-admin@test.rw', password: PASSWORD })
+    expect(afterRevocation.status).toBe(200)
+    expect(afterRevocation.body.data.twoFactorRequired).toBe(true)
+  })
+})
