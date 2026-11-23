@@ -1237,6 +1237,9 @@ describe('administrator trusted-device authentication', () => {
         trustDevice: true,
       })
     expect(reverified.status).toBe(200)
+    const userAfterExpiry = await User.findOne({ email: 'trusted-device-admin@test.rw' })
+    userAfterExpiry!.twoFactorCodeSentAt = new Date(Date.now() - 120_000)
+    await userAfterExpiry!.save()
 
     const devices = await request(app)
       .get('/api/v1/auth/trusted-devices')
@@ -1269,6 +1272,9 @@ describe('administrator trusted-device authentication', () => {
       .set({ Authorization: `Bearer ${trustedAgain.body.data.accessToken}` })
       .send({ currentPassword: PASSWORD, newPassword: 'NewSecurePass2026' })
     expect(changedPassword.status).toBe(200)
+    const userAfterPasswordChange = await User.findOne({ email: 'trusted-device-admin@test.rw' })
+    userAfterPasswordChange!.twoFactorCodeSentAt = new Date(Date.now() - 120_000)
+    await userAfterPasswordChange!.save()
 
     const afterPasswordChange = await device
       .post('/api/v1/auth/login')
