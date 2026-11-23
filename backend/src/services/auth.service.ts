@@ -18,7 +18,28 @@ export const REFRESH_COOKIE_PATH = '/api/v1/auth'
 /** Roles that must always use MFA regardless of per-user or school-wide settings. */
 export const MFA_REQUIRED_ROLES = new Set(['ADMIN', 'HEADTEACHER', 'IT'])
 
-async function hasAdminRole(userId: Types.ObjectId | string): Promise<boolean> {\n  const links = await UserRole.find({ userId }).lean()\n  if (!links.length) return false\n  const roles = await Role.find({ _id: { $in: links.map((l) => l.roleId) } }).lean()\n  return roles.some((r) => r.key === 'ADMIN')\n}\n\nasync function requiresMfaByRole(userId: Types.ObjectId | string): Promise<boolean> {
+async function hasAdminRole(userId: Types.ObjectId | string): Promise<boolean> {\n  const links = await UserRole.find({ userId }).lean()\n  if (!links.length) return false\n  const roles = await Role.find({ _id: { $in: links.map((l) => l.roleId) } }).lean()\n  return roles.some((r) => r.key === 'ADMIN')\n}\n\nasync function rotateTrustedDevice(userId: Types.ObjectId | string, rawToken: string): Promise<string | null> {
+  const nextToken = randomToken(48)
+  const updated = await TrustedDevice.findOneAndUpdate(
+    {
+      userId,
+      tokenHash: sha256(rawToken),
+      revokedAt: { $exists: false },
+      expiresAt: { $gt: new Date() },
+    },
+    {
+      $set: {
+        tokenHash: sha256(nextToken),
+        lastUsedAt: new Date(),
+        expiresAt: addDays(new Date(), 30),
+      },
+    },
+    { new: true },
+  )
+  return updated ? nextToken : null
+}
+
+async function requiresMfaByRole(userId: Types.ObjectId | string): Promise<boolean> {
   const links = await UserRole.find({ userId }).lean()
   if (!links.length) return false
   const roles = await Role.find({ _id: { $in: links.map((l) => l.roleId) } }).lean()
@@ -264,18 +285,8 @@ export async function loginWithPassword(input: {
   // issues tokens, so a stolen password alone cannot start a session.
   const adminAccount = await hasAdminRole(user._id)
   if (adminAccount && input.trustedDeviceToken) {
-    const trusted = await TrustedDevice.findOne({
-      userId: user._id,
-      tokenHash: sha256(input.trustedDeviceToken),
-      revokedAt: { $exists: false },
-      expiresAt: { $gt: new Date() },
-    })
-    if (trusted) {
-      const rotatedToken = randomToken(48)
-      trusted.tokenHash = sha256(rotatedToken)
-      trusted.lastUsedAt = new Date()
-      trusted.expiresAt = addDays(new Date(), 30)
-      await trusted.save()
+    const rotatedToken = await rotateTrustedDevice(user._id, input.trustedDeviceToken)
+    if (rotatedToken) {
       user.lastLoginAt = new Date()
       await user.save()
       const tokens = await issueTokens(user, input)
@@ -554,18 +565,8 @@ export async function loginWithGoogle(input: {
   // server-recorded trusted-device credential. Google identity is still verified.
   const adminAccount = await hasAdminRole(user._id)
   if (adminAccount && input.trustedDeviceToken) {
-    const trusted = await TrustedDevice.findOne({
-      userId: user._id,
-      tokenHash: sha256(input.trustedDeviceToken),
-      revokedAt: { $exists: false },
-      expiresAt: { $gt: new Date() },
-    })
-    if (trusted) {
-      const rotatedToken = randomToken(48)
-      trusted.tokenHash = sha256(rotatedToken)
-      trusted.lastUsedAt = new Date()
-      trusted.expiresAt = addDays(new Date(), 30)
-      await trusted.save()
+    const rotatedToken = await rotateTrustedDevice(user._id, input.trustedDeviceToken)
+    if (rotatedToken) {
       user.lastLoginAt = new Date()
       await user.save()
       const tokens = await issueTokens(user, input)
@@ -731,7 +732,7 @@ export async function verifyEmailChange(token: string): Promise<{ userId: string
   user.emailChangeExpires = undefined
   await user.save()
   await TrustedDevice.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } })
-  await Session.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date(), revokedReason: 'email_changed' } })
+  await revokeAllSessions(user._id)
   invalidateUserAccess(String(user._id))
   return { userId: String(user._id), name: user.name }
 }
