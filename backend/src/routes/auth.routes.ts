@@ -745,6 +745,7 @@ router.post(
   validate({ body: z.object({ newEmail: z.string().trim().email(), password: z.string().min(1) }) }),
   asyncHandler(async (req, res) => {
     const ctx = actorOf(req)
+    if (!ctx.roles.includes('ADMIN')) throw ApiError.forbidden()
     await beginEmailChange(ctx.userId, req.body.newEmail, req.body.password)
     await writeAudit({ req, actor: ctx, action: 'auth.email_change_requested', resourceType: 'User', resourceId: String(ctx.userId), after: { newEmail: req.body.newEmail.trim().toLowerCase() } })
     ok(res, { message: 'A verification link has been sent to your new email address. Your current email remains active until verification.' })
