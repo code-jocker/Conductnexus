@@ -117,6 +117,7 @@ export type PasswordLoginResult =
   | { status: 'authenticated'; tokens: TokenPair; ctx: AuthContext; trustedDeviceToken?: string }
   | ({
       status: 'two_factor_required'
+      canTrustDevice?: boolean
       challenge: string
       userId: string
       name: string
@@ -286,6 +287,7 @@ export async function loginWithPassword(input: {
     const delivery = await issueTwoFactorChallenge(user, input.channel ?? 'email')
     return {
       status: 'two_factor_required',
+      canTrustDevice: adminAccount,
       challenge,
       userId: String(user._id),
       name: user.name,
