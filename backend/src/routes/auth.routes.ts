@@ -317,6 +317,7 @@ router.post(
   authenticate,
   asyncHandler(async (req, res) => {
     await revokeAllSessions(actorOf(req).userId)
+    await revokeAllTrustedDevices(actorOf(req).userId)
     invalidateUserAccess(String(actorOf(req).userId))
     res.clearCookie(REFRESH_COOKIE, { path: '/api/v1/auth' })
     ok(res, { message: 'All sessions revoked' })
