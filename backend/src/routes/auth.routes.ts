@@ -493,6 +493,16 @@ router.post(
     const { tokens, ctx } = result
     setTrustedDeviceCookie(res, result.trustedDeviceToken)
     await writeAudit({ req, actor: ctx, action: 'auth.2fa_verified', resourceType: 'User', resourceId: String(ctx.userId), after: { trustedDevice: Boolean(result.trustedDeviceToken) } })
+    if (result.trustedDeviceToken) {
+      await writeAudit({
+        req,
+        actor: ctx,
+        action: 'auth.trusted_device_registered',
+        resourceType: 'User',
+        resourceId: String(ctx.userId),
+        after: { deviceName: req.headers['user-agent']?.slice(0, 120) ?? 'Trusted browser', expiresInDays: 30 },
+      })
+    }
     sendTokens(res, tokens, { user: ctx.user, permissions: [...ctx.permissions], roles: ctx.roles })
   }),
 )
@@ -781,7 +791,7 @@ router.delete(
     const ctx = actorOf(req)
     if (!ctx.roles.includes('ADMIN')) throw ApiError.forbidden()
     await revokeAllTrustedDevices(ctx.userId)
-    res.clearCookie(ADMIN_TRUST_COOKIE, { path: '/api/v1/auth', secure: true, sameSite: 'none' })
+    res.clearCookie(ADMIN_TRUST_COOKIE, { ...trustedCookieOptions(), maxAge: undefined })
     await writeAudit({ req, actor: ctx, action: 'auth.trusted_devices_revoked', resourceType: 'User', resourceId: String(ctx.userId) })
     ok(res, { message: 'All trusted devices have been revoked.' })
   }),
