@@ -51,6 +51,7 @@ export function LoginPage() {
   const from = (location.state as { from?: string } | null)?.from || '/'
 
   function startChallenge(challenge: TwoFactorChallenge) {
+    setTrustDevice(false)
     setTwoFactor(challenge)
     setCode(challenge.devCode ?? '')
     setCooldown(RESEND_SECONDS)
