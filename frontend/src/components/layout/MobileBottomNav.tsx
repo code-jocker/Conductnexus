@@ -38,14 +38,14 @@ type NavItem = {
 const BOTTOM_NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'nav.dashboard', icon: LayoutDashboard },
   { to: '/students', label: 'nav.students', icon: GraduationCap, permission: 'students.view' },
-  { to: '/incidents/new', label: 'Quick log', icon: ClipboardList, permission: 'incidents.create' },
-  { to: '/communications', label: 'Alerts', icon: Bell, permission: 'notifications.view' },
+  { to: '/incidents/new', label: 'nav.quickLog', icon: ClipboardList, permission: 'incidents.create' },
+  { to: '/communications', label: 'nav.alerts', icon: Bell, permission: 'notifications.view' },
 ]
 
 const PARENT_BOTTOM_ITEMS: NavItem[] = [
   { to: '/portal', label: 'nav.portal', icon: Home },
   { to: '/communications', label: 'Alerts', icon: Bell, permission: 'notifications.view' },
-  { to: '/profile', label: 'My profile', icon: UserRound },
+  { to: '/profile', label: 'nav.profile', icon: UserRound },
 ]
 
 const MORE_MENU_ITEMS: NavItem[] = [
@@ -172,7 +172,7 @@ export function MobileBottomNav() {
             aria-expanded={moreOpen}
           >
             <MoreHorizontal className="h-5 w-5" />
-            <span>{t(MORE_MENU_KEY) || 'More'}</span>
+            <span>{t(MORE_MENU_KEY)}</span>
           </button>
         </div>
       </nav>
@@ -197,7 +197,7 @@ export function MobileBottomNav() {
                 <h2 id="mobile-more-title" className="text-base font-semibold text-slate-900 dark:text-white">
                   {t(MORE_MENU_KEY) || 'More'}
                 </h2>
-                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">All areas available to your account</p>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{t('nav.allAreas')}</p>
               </div>
               <button
                 type="button"
@@ -216,7 +216,7 @@ export function MobileBottomNav() {
                   type="search"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search menu…"
+                  placeholder={t('nav.searchMenu')}
                   aria-label="Search navigation menu"
                   className="h-11 w-full rounded-lg border border-line bg-slate-50 pl-9 pr-3 text-base text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-[#26374f] dark:bg-[#0c1524] dark:text-white"
                 />
@@ -246,7 +246,7 @@ export function MobileBottomNav() {
                 ))
               ) : (
                 <p className="px-3 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-                  No matching sections. Try another search.
+                  {t('nav.noMatchingSections')}
                 </p>
               )}
             </nav>
@@ -258,7 +258,7 @@ export function MobileBottomNav() {
                 className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border border-line px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-[#2a3b55] dark:text-slate-200 dark:hover:bg-white/5"
               >
                 <span>{language === 'en' ? 'EN' : 'RW'}</span>
-                {language === 'en' ? 'Switch to Kinyarwanda' : 'Hindura mu Cyongereza'}
+                {language === 'en' ? t('nav.switchToKinyarwanda') : t('nav.switchToEnglish')}
               </button>
               <button
                 type="button"
@@ -267,7 +267,7 @@ export function MobileBottomNav() {
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-red-50 px-3 text-sm font-semibold text-red-700 disabled:opacity-60 dark:bg-red-950/30 dark:text-red-300"
               >
                 <LogOut className="h-4 w-4" />
-                {loggingOut ? 'Signing out…' : t('action.signOut')}
+                {loggingOut ? t('nav.signingOut') : t('action.signOut')}
               </button>
             </div>
           </section>
