@@ -43,7 +43,7 @@ export function DraftsPage() {
       const response = await post<{ results: SyncResult[]; syncedAt: string }>('/sync/incidents', {
         drafts: drafts.map((d) => ({
           localId: d.localId,
-          studentId: d.studentId,
+          studentId: d.studentIds[0],
           offenceId: d.offenceId,
           description: d.description,
           occurredAt: d.occurredAt,
@@ -104,8 +104,8 @@ export function DraftsPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{draft.studentName}</span>
-                      {draft.studentRef && <span className="text-xs text-slate-400">{draft.studentRef}</span>}
+                      <span className="font-medium">{draft.studentNames[0]}</span>
+                      {draft.studentRefs[0] && <span className="text-xs text-slate-400">{draft.studentRefs[0]}</span>}
                       <Badge tone="ochre">{draft.offenceName}</Badge>
                       {draft.safeguarding && <Badge tone="danger">Safeguarding</Badge>}
                       {result && <Badge tone={statusTone[result.status]}>{result.status === 'synced' ? `Synced ${result.reference ?? ''}` : result.status}</Badge>}

@@ -1,11 +1,34 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, ArrowLeft, CheckCircle2, CloudOff, FileText, MapPin, Paperclip, Search, Send, ShieldAlert, Trash2, UserRound, X } from 'lucide-react'
-import { Alert, Badge, Button, Card, CardHeader, Field, Input, Select, Textarea } from '../components/ui'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  CloudOff,
+  Clipboard,
+  FileText,
+  MapPin,
+  Paperclip,
+  Search,
+  Send,
+  ShieldAlert,
+  Trash2,
+  UserRound,
+  X,
+  Loader2,
+} from 'lucide-react'
+import { Alert, Badge, Button, Card, CardHeader, Field, Input, Select, Textarea, Modal } from '../components/ui'
 import { api, apiError, get, post } from '../lib/api'
 import { useOffences, useStudentSearch } from '../lib/hooks'
-import { newLocalId, saveOfflineDraft } from '../lib/offline'
+import {
+  newLocalId,
+  saveOfflineDraft,
+  fileToDataUrl,
+  dataUrlToFile,
+  type OfflineEvidenceFile,
+  type OfflineIncidentDraft,
+} from '../lib/offline'
 import { useToast } from '../components/toast'
 import type { Incident, Offence, Student } from '../lib/types'
 import { humanBytes, titleCase } from '../lib/utils'
@@ -19,11 +42,22 @@ function nowLocalInput() {
 type StudentDetail = { id: string; fullName: string; studentId: string; className?: string; currentBalance?: number }
 type SelectedStudent = { id: string; name: string; ref?: string; balance?: number; className?: string }
 
+type SubmissionStatus = 'idle' | 'pending' | 'synced' | 'failed'
+
+type PerStudentState = {
+  id: string
+  name: string
+  status: SubmissionStatus
+  incidentId?: string
+  error?: string
+}
+
 export function IncidentNewPage() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const { success, error: toastError, info } = useToast()
   const presetId = params.get('studentId') ?? ''
+  const [isOnline, setIsOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine)
 
   const [students, setStudents] = useState<SelectedStudent[]>([])
   const [studentQuery, setStudentQuery] = useState('')
@@ -38,6 +72,8 @@ export function IncidentNewPage() {
   const [files, setFiles] = useState<File[]>([])
   const [busy, setBusy] = useState<'draft' | 'submit' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [perStudent, setPerStudent] = useState<PerStudentState[]>([])
 
   const { data: offences } = useOffences()
   const { data: results } = useStudentSearch(studentQuery, studentQuery.length >= 2)
@@ -63,6 +99,17 @@ export function IncidentNewPage() {
   })
 
   useEffect(() => {
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!presetId || students.some((s) => s.id === presetId)) return
     get<StudentDetail>(`/students/${presetId}`)
       .then((s) => setStudents([{ id: s.id, name: s.fullName, ref: s.studentId, balance: s.currentBalance, className: s.className }]))
@@ -85,6 +132,8 @@ export function IncidentNewPage() {
       ? 'Select at least one student, an offence rule, describe what happened (10+ characters) and record the location.'
       : null
 
+  const evidenceRequired = Boolean(selectedOffence?.requiresEvidence) && files.length === 0
+
   function addStudent(s: SelectedStudent) {
     setStudents((list) => (list.some((x) => x.id === s.id) ? list : [...list, s]))
     setStudentQuery('')
@@ -94,12 +143,12 @@ export function IncidentNewPage() {
     setStudents((list) => list.filter((s) => s.id !== id))
   }
 
-  function buildDraft() {
+  function buildDraft(): OfflineIncidentDraft {
     return {
       localId: newLocalId(),
-      studentId: students[0].id,
-      studentName: students[0].name,
-      studentRef: students[0].ref,
+      studentIds: students.map((s) => s.id),
+      studentNames: students.map((s) => s.name),
+      studentRefs: students.map((s) => s.ref ?? ''),
       offenceId,
       offenceName: selectedOffence?.name ?? '',
       description: description.trim(),
@@ -112,6 +161,7 @@ export function IncidentNewPage() {
       immediateAction: immediateAction.trim() || undefined,
       clientSubmissionId: `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       savedAt: new Date().toISOString(),
+      evidenceFiles: [],
     }
   }
 
@@ -125,38 +175,101 @@ export function IncidentNewPage() {
     await api.post('/evidence', form, { headers: { 'Content-Type': 'multipart/form-data' } })
   }
 
-  async function createAndMaybeSubmit(submit: boolean) {
+  async function saveDraftToDevice() {
     if (validation) return
     setError(null)
-    setBusy(submit ? 'submit' : 'draft')
-    const draft = buildDraft()
-    const clientSubmissionId = draft.clientSubmissionId
-    const created: { _id: string; incidentNumber: string }[] = []
+    setBusy('draft')
     try {
-      for (const student of students) {
-        const incident = await post<{ _id: string; incidentNumber: string }>('/incidents', {
-          studentId: student.id,
-          offenceId,
-          description: description.trim(),
-          occurredAt: new Date(occurredAt).toISOString(),
-          location: location.trim(),
-          safeguardingFlag: safeguarding,
-          witnesses: witnessName.trim() ? [{ name: witnessName.trim(), statement: witnessStatement.trim() || undefined }] : undefined,
-          immediateAction: immediateAction.trim() || undefined,
-          clientSubmissionId: `${clientSubmissionId}-${student.id}`,
-        })
-        created.push(incident)
-        for (const file of files) await uploadEvidence(incident._id, file)
-        if (submit) await post(`/incidents/${incident._id}/submit`)
+      const draft = buildDraft()
+      // Convert files to Data URLs so evidence survives in IndexedDB.
+      const evidenceFiles: OfflineEvidenceFile[] = []
+      for (const file of files) {
+        const dataUrl = await fileToDataUrl(file)
+        evidenceFiles.push({ name: file.name, size: file.size, type: file.type, dataUrl })
       }
-      const label = created.length === 1 ? created[0].incidentNumber : `${created.length} incidents`
-      success(submit ? `${label} submitted for independent review` : `${label} saved as draft${created.length > 1 ? 's' : ''}`)
-      if (created.length === 1) navigate(`/incidents/${created[0]._id}`)
-      else navigate('/incidents')
+      await saveOfflineDraft({ ...draft, evidenceFiles })
+      success(`${draft.studentIds.length} learner${draft.studentIds.length === 1 ? '' : 's'} saved as draft on this device. Sync from Offline drafts when the connection returns.`)
+      navigate('/drafts')
+    } catch (err) {
+      setError(apiError(err))
+      toastError(apiError(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function submitIncidents() {
+    if (validation) return
+    setError(null)
+    setBusy('submit')
+    setPerStudent(students.map((s) => ({ id: s.id, name: s.name, status: 'pending' })))
+
+    const clientSubmissionId = `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const created: { _id: string; incidentNumber: string }[] = []
+    let failed = 0
+
+    try {
+      for (let i = 0; i < students.length; i++) {
+        const student = students[i]
+        setPerStudent((prev) =>
+          prev.map((p) => (p.id === student.id ? { ...p, status: 'pending' } : p)),
+        )
+
+        try {
+          const incident = await post<{ _id: string; incidentNumber: string }>('/incidents', {
+            studentId: student.id,
+            offenceId,
+            description: description.trim(),
+            occurredAt: new Date(occurredAt).toISOString(),
+            location: location.trim(),
+            safeguardingFlag: safeguarding,
+            witnesses: witnessName.trim() ? [{ name: witnessName.trim(), statement: witnessStatement.trim() || undefined }] : undefined,
+            immediateAction: immediateAction.trim() || undefined,
+            clientSubmissionId: `${clientSubmissionId}-${student.id}`,
+          })
+          created.push(incident)
+          setPerStudent((prev) =>
+            prev.map((p) => (p.id === student.id ? { ...p, status: 'synced', incidentId: incident._id } : p)),
+          )
+
+          // Upload evidence for this incident.
+          for (const file of files) {
+            try {
+              await uploadEvidence(incident._id, file)
+            } catch (evErr) {
+              // Evidence upload failure does not roll back the incident; surface per-student.
+              setPerStudent((prev) =>
+                prev.map((p) =>
+                  p.id === student.id ? { ...p, status: 'failed', error: `Evidence upload failed: ${apiError(evErr)}` } : p,
+                ),
+              )
+              failed++
+            }
+          }
+
+          await post(`/incidents/${incident._id}/submit`)
+        } catch (err) {
+          failed++
+          const message = apiError(err)
+          setPerStudent((prev) =>
+            prev.map((p) => (p.id === student.id ? { ...p, status: 'failed', error: message } : p)),
+          )
+        }
+      }
+
+      const synced = created.length
+      const label = synced === 1 ? created[0]?.incidentNumber : `${synced} incidents`
+      if (failed === 0) {
+        success(submitIncidents.name ? `${label} submitted for independent review` : `${label} saved`)
+        if (synced === 1) navigate(`/incidents/${created[0]._id}`)
+        else navigate('/incidents')
+      } else {
+        warning(`${synced} recorded${failed > 0 ? `, ${failed} failed` : ''}`)
+      }
     } catch (err) {
       const message = apiError(err)
       if (!created.length && /reach the server|Network Error|ERR_NETWORK/i.test(message)) {
-        await saveOfflineDraft(draft)
+        await saveDraftToDevice()
         info('Saved offline on this device. Sync it from Offline drafts when the connection returns.')
         navigate('/drafts')
       } else {
@@ -169,8 +282,13 @@ export function IncidentNewPage() {
     }
   }
 
+  function warning(message: string) {
+    setError(message)
+    toastError(message)
+  }
+
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
+    <div className="mx-auto max-w-4xl space-y-5 sm:px-6">
       <button onClick={() => navigate(-1)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-brand-600">
         <ArrowLeft className="h-3.5 w-3.5" /> Back
       </button>
@@ -183,10 +301,14 @@ export function IncidentNewPage() {
         </p>
       </div>
 
-      {error && (
-        <Alert tone="danger" title="Incident not recorded">
-          {error}
+      {!isOnline && (
+        <Alert tone="warning" title="You are offline">
+          Incident drafts are saved on this device and will sync when the connection returns.
         </Alert>
+      )}
+
+      {error && (
+        <Alert tone="danger" title="Incident not recorded">{error}</Alert>
       )}
 
       <Card>
@@ -398,7 +520,7 @@ export function IncidentNewPage() {
           ) : (
             <p className="text-xs text-slate-400">No evidence attached yet. Evidence is hashed and access-logged on upload.</p>
           )}
-          {selectedOffence?.requiresEvidence && !files.length && (
+          {evidenceRequired && (
             <Alert tone="warning" title="Evidence required">
               This offence cannot be submitted for review without at least one supporting file.
             </Alert>
@@ -406,15 +528,46 @@ export function IncidentNewPage() {
         </div>
       </Card>
 
+      {perStudent.length > 0 && (
+        <Card>
+          <CardHeader title="Submission progress" subtitle="One case per learner — each is reviewed independently"           icon={Clipboard} />
+          <div className="p-5 space-y-3">
+            {perStudent.map((s) => (
+              <div key={s.id} className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-line dark:border-[#26374f] bg-white/50 dark:bg-white/5">
+                <div className="min-w-0 flex items-center gap-2">
+                  <span className="font-medium truncate">{s.name}</span>
+                  {s.incidentId && <span className="text-[10px] font-mono text-slate-400">#{s.incidentId.slice(-6)}</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  {s.status === 'pending' ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
+                  ) : s.status === 'synced' ? (
+                    <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">Recorded</span>
+                  ) : (
+                    <span className="text-xs font-semibold text-red-700 dark:text-red-300">Failed</span>
+                  )}
+                </div>
+                {s.error && <span className="text-xs text-red-600 dark:text-red-400 truncate max-w-[200px]">{s.error}</span>}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="flex items-center gap-1.5 text-xs text-slate-400">
           <CloudOff className="h-3.5 w-3.5" /> If the network drops, this form is kept safely on your device.
         </p>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Button variant="secondary" loading={busy === 'draft'} disabled={Boolean(validation) || busy !== null} onClick={() => createAndMaybeSubmit(false)}>
+          <Button variant="secondary" loading={busy === 'draft'} disabled={Boolean(validation) || busy !== null} onClick={saveDraftToDevice}>
             Save draft
           </Button>
-          <Button loading={busy === 'submit'} disabled={Boolean(validation) || busy !== null} onClick={() => createAndMaybeSubmit(true)} icon={Send}>
+          <Button
+            loading={busy === 'submit'}
+            disabled={Boolean(validation) || busy !== null || evidenceRequired}
+            onClick={() => setConfirmOpen(true)}
+            icon={Send}
+          >
             Submit for review
           </Button>
         </div>
@@ -424,6 +577,54 @@ export function IncidentNewPage() {
           <CheckCircle2 className="h-3.5 w-3.5" /> {validation}
         </p>
       )}
+
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="Confirm submission"
+        subtitle={`This will create ${students.length} separate case${students.length === 1 ? '' : 's'} — one for each learner selected. Each case is reviewed independently.`}
+        size="md"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              loading={busy === 'submit'}
+              disabled={busy !== null || evidenceRequired}
+              onClick={() => {
+                setConfirmOpen(false)
+                submitIncidents()
+              }}
+            >
+              <Send className="h-4 w-4" /> Confirm and submit
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          <p>Selected learners:</p>
+          <ul className="space-y-1 text-sm text-slate-600 dark:text-slate-300">
+            {students.map((s) => (
+              <li key={s.id} className="flex justify-between">
+                <span>{s.name}</span>
+                <span className="text-slate-400 text-xs">{s.ref}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Offence: <span className="font-medium">{selectedOffence?.name ?? '—'}</span> ·{' '}
+            {selectedOffence?.deduction != null ? `−${selectedOffence.deduction} marks` : ''}{' '}
+            · {titleCase(selectedOffence?.severity ?? '—')}
+          </p>
+          {evidenceRequired && (
+            <Alert tone="warning" title="Evidence required">
+              Attach at least one supporting file before submitting.
+            </Alert>
+          )}
+        </div>
+      </Modal>
     </div>
   )
 }
