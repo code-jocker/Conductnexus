@@ -1480,7 +1480,6 @@ function WhatsappTab() {
       success('WhatsApp disconnected')
       setPairOpen(false)
       queryClient.invalidateQueries({ queryKey: ['whatsapp-status'] })
-      queryClient.invalidateQueries({ queryKey: ['whatsapp-qr'] })
     },
     onError: (err) => toastError(apiError(err)),
   })
