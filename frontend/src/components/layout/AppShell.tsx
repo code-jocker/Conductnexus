@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity,
@@ -124,19 +125,19 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const [schoolName, setSchoolName] = useState('ConductNexus')
+  const { data: settings } = useQuery({
+    queryKey: ['school-settings'],
+    queryFn: () => get<Settings>('/settings'),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+  })
+  const schoolName = settings?.school?.name || 'ConductNexus'
   const { count } = useUnreadCount()
   const location = useLocation()
   const navigate = useNavigate()
   const userMenuRef = useRef<HTMLDivElement>(null)
 
   const isParent = me?.roles.includes('PARENT') && !me?.roles.some((r) => ['ADMIN', 'HEADTEACHER', 'TEACHER', 'DEPUTY_DISCIPLINE'].includes(r))
-
-  useEffect(() => {
-    get<Settings>('/settings')
-      .then((s) => setSchoolName(s.school?.name || 'ConductNexus'))
-      .catch(() => undefined)
-  }, [])
 
   useEffect(() => {
     setMobileOpen(false)
