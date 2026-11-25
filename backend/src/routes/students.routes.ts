@@ -415,6 +415,8 @@ router.get(
     const [total, students] = await Promise.all([
       Student.countDocuments(filter),
       Student.find(filter)
+        // Keep large and sensitive profile fields out of the paginated table response.
+        .select('-medicalNotes -documents -enrollmentHistory -notes -customFields -emergencyContact -contact -nationalId -bloodGroup -religion')
         .sort(sortMap[q.sort ?? 'name'] ?? { lastName: 1, firstName: 1 })
         .skip(skip)
         .limit(pageSize)
