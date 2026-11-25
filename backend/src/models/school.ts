@@ -255,6 +255,8 @@ studentSchema.index({ fullName: 'text', studentId: 'text', admissionNumber: 'tex
 studentSchema.index({ status: 1, classId: 1, lastName: 1 })
 studentSchema.index({ status: 1, riskLevel: 1 })
 studentSchema.index({ status: 1, admissionDate: 1 })
+// Supports the frequently used balance sort without scanning the full student collection.
+studentSchema.index({ currentBalance: 1, lastName: 1, firstName: 1 })
 
 export const Student = model<IStudent>('Student', studentSchema)
 
