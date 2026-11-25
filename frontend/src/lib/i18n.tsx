@@ -4,6 +4,16 @@ export type Language = 'en' | 'rw'
 
 const DICTIONARY: Record<string, { en: string; rw: string }> = {
   'nav.dashboard': { en: 'Dashboard', rw: 'Imbonerahamwe' },
+  'nav.quickLog': { en: 'Quick log', rw: 'Andika igikorwa' },
+  'nav.alerts': { en: 'Alerts', rw: 'Ubutumwa' },
+  'nav.profile': { en: 'My profile', rw: 'Umwirondoro wanjye' },
+  'nav.more': { en: 'More', rw: 'Ibindi' },
+  'nav.allAreas': { en: 'All areas available to your account', rw: 'Ibyiciro byose wemerewe' },
+  'nav.searchMenu': { en: 'Search menu…', rw: 'Shakisha mu byiciro…' },
+  'nav.noMatchingSections': { en: 'No matching sections. Try another search.', rw: 'Nta byiciro bihuye n’ishakisha ryawe.' },
+  'nav.switchToKinyarwanda': { en: 'Switch to Kinyarwanda', rw: 'Hindura mu Kinyarwanda' },
+  'nav.switchToEnglish': { en: 'Switch to English', rw: 'Hindura mu Cyongereza' },
+  'nav.signingOut': { en: 'Signing out…', rw: 'Turimo gusohoka…' },
   'nav.students': { en: 'Students', rw: 'Abanyeshuri' },
   'nav.promotions': { en: 'Promotions', rw: 'Kuzamurwa mu byiciro' },
   'nav.attendance': { en: 'Attendance', rw: 'Kwitabira' },
