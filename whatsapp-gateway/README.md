@@ -197,3 +197,26 @@ All routes except `/health` require `Authorization: Bearer <GATEWAY_TOKEN>`.
 | POST | `/connect` | Start the client; body `{ "phoneNumber": "2507…" }` is optional |
 | POST | `/disconnect` | Destroy the client and clear the link |
 | POST | `/send` | Send text; body `{ "to": "2507…", "body": "…" }` |
+
+
+## Rate limits and connection safety
+
+The gateway applies separate per-client, one-minute limits:
+
+- Status and QR reads: 120 requests/minute.
+- Connect and disconnect lifecycle requests: 5 requests/minute.
+- Outbound sends: 30 requests/minute.
+
+Authentication is checked before a request consumes a quota. The public
+`/health` endpoint is excluded for platform probes. The `Retry-After` response
+header tells clients when a limited request may be attempted again.
+
+Set `TRUST_PROXY=1` when running behind Render's single reverse-proxy hop (as
+configured in `render.yaml`). For another hosting provider, set this to the
+exact number of trusted proxy hops; do not set it to `true` unless every
+forwarded-header sender is trusted.
+
+Run a single gateway instance for a given `SESSION_NAME`: the WhatsApp browser
+profile is a single-writer resource. The in-process connection lock prevents
+duplicate initialization within that instance; it is not a distributed lock
+across multiple replicas.

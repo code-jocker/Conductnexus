@@ -261,58 +261,42 @@ type GatewaySnapshot = {
 let gatewaySnapshot: GatewaySnapshot | null = null
 let gatewayError: string | null = null
 let gatewaySnapshotAt: number | null = null
-const GATEWAY_STATUS_CACHE_TTL_MS = 8_000
+const GATEWAY_STATUS_CACHE_TTL_MS = 2_000
+let gatewaySnapshotPromise: Promise<GatewaySnapshot | null> | null = null
 
 async function gatewayRequest<T>(pathname: string, init: RequestInit = {}): Promise<T> {
   const base = env.WHATSAPP_GATEWAY_URL.replace(/\/+$/, '')
-  const maxRetries = 3
-  let lastError: unknown = null
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const response = await fetch(`${base}${pathname}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.WHATSAPP_GATEWAY_TOKEN}`,
-        ...(init.headers ?? {}),
-      },
-      signal: AbortSignal.timeout(pathname === '/status' ? 4_000 : 10_000),
-    })
-
-    // Rate limited — honor Retry-After and retry.
-    if (response.status === 429 && attempt < maxRetries) {
-      const retryAfter = response.headers.get('retry-after')
-      const delayMs = retryAfter ? Number.parseInt(retryAfter, 10) * 1000 : Math.min(1000 * 2 ** attempt, 10_000)
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
-      lastError = new Error(`WhatsApp gateway rate limited (attempt ${attempt + 1}/${maxRetries + 1})`)
-      continue
-    }
-
-    const payload = (await response.json().catch(() => null)) as (T & { ok?: boolean; error?: string }) | null
-    if (!response.ok || payload?.ok === false) {
-      throw new Error(payload?.error || `WhatsApp gateway returned ${response.status}`)
-    }
-    return payload as T
+  const response = await fetch(`${base}${pathname}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.WHATSAPP_GATEWAY_TOKEN}`, ...(init.headers ?? {}) },
+    signal: AbortSignal.timeout(pathname === '/status' || pathname === '/qr' ? 4_000 : 10_000),
+  })
+  const payload = (await response.json().catch(() => null)) as (T & { ok?: boolean; error?: string }) | null
+  if (!response.ok || payload?.ok === false) {
+    // Treat 429 as back-pressure; automatic retries amplify the overload.
+    const retryAfter = response.headers.get('retry-after')
+    const suffix = response.status === 429 && retryAfter ? ` (retry after ${retryAfter}s)` : ''
+    throw new Error(`${payload?.error || `WhatsApp gateway returned ${response.status}`}${suffix}`)
   }
-
-  throw lastError ?? new Error('WhatsApp gateway request failed after retries')
+  return payload as T
 }
 
 async function refreshGatewaySnapshot(): Promise<GatewaySnapshot | null> {
   const now = Date.now()
-  if (gatewaySnapshot && gatewaySnapshotAt && now - gatewaySnapshotAt < GATEWAY_STATUS_CACHE_TTL_MS) {
+  if (gatewaySnapshot && gatewaySnapshotAt && now - gatewaySnapshotAt < GATEWAY_STATUS_CACHE_TTL_MS) return gatewaySnapshot
+  if (gatewaySnapshotPromise) return gatewaySnapshotPromise
+  gatewaySnapshotPromise = (async () => {
+    try {
+      gatewaySnapshot = await gatewayRequest<GatewaySnapshot>('/status')
+      gatewayError = null
+    } catch (err) {
+      gatewayError = err instanceof Error ? err.message : 'WhatsApp gateway is unreachable'
+      // Preserve the last known snapshot during transient throttling or outages.
+    }
+    gatewaySnapshotAt = Date.now()
     return gatewaySnapshot
-  }
-  try {
-    gatewaySnapshot = await gatewayRequest<GatewaySnapshot>('/status')
-    gatewayError = null
-    gatewaySnapshotAt = now
-  } catch (err) {
-    gatewaySnapshot = null
-    gatewayError = err instanceof Error ? err.message : 'WhatsApp gateway is unreachable'
-    gatewaySnapshotAt = now
-  }
-  return gatewaySnapshot
+  })().finally(() => { gatewaySnapshotPromise = null })
+  return gatewaySnapshotPromise
 }
 
 export function whatsappGatewayReady(): boolean {
@@ -472,6 +456,7 @@ export async function startWhatsapp(phoneNumber?: string): Promise<{ status: str
         method: 'POST',
         body: JSON.stringify({ phoneNumber }),
       })
+      gatewaySnapshotAt = 0
       void refreshGatewaySnapshot()
       return result
     } catch (err) {
