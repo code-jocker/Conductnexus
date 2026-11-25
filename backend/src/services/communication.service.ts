@@ -261,7 +261,7 @@ type GatewaySnapshot = {
 let gatewaySnapshot: GatewaySnapshot | null = null
 let gatewayError: string | null = null
 let gatewaySnapshotAt: number | null = null
-const GATEWAY_STATUS_CACHE_TTL_MS = 8_000
+const GATEWAY_STATUS_CACHE_TTL_MS = 2_000
 let gatewaySnapshotPromise: Promise<GatewaySnapshot | null> | null = null
 
 async function gatewayRequest<T>(pathname: string, init: RequestInit = {}): Promise<T> {
