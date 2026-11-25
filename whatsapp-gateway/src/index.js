@@ -168,7 +168,7 @@ async function startInternal(phoneNumber) {
   if (phoneNumber && (pairPhone.length < 8 || pairPhone.length > 15)) return { status: 'failed', message: 'Phone number must contain 8–15 digits including country code.' }
 
   if (client) {
-    if (!pairPhone || state.status === 'ready') {
+    if (!pairPhone || state.status === 'ready' || (state.pairingPhone === pairPhone && ['initializing', 'pairing'].includes(state.status))) {
       return { status: state.status, message: 'WhatsApp session already initialized.' }
     }
     await stop({ reason: 'Switching to phone pairing' })
@@ -284,15 +284,15 @@ async function startInternal(phoneNumber) {
     scheduleReconnect()
   })
 
-  try {
-    await instance.initialize()
-  } catch (err) {
+  // Start Chromium in the background. The API returns immediately while the
+  // QR/pairing event updates the cached state for the frontend poller.
+  void instance.initialize().catch(async (err) => {
     console.error('WhatsApp initialization failed:', errorText(err))
     if (!isCurrent()) return
     await retire(instance)
     setState({ status: 'failed', lastError: errorText(err) })
     scheduleReconnect()
-  }
+  })
 
   return {
     status: 'initializing',
