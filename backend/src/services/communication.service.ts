@@ -265,7 +265,7 @@ const GATEWAY_STATUS_CACHE_TTL_MS = 8_000
 let gatewaySnapshotPromise: Promise<GatewaySnapshot | null> | null = null
 
 async function gatewayRequest<T>(pathname: string, init: RequestInit = {}): Promise<T> {
-  const base = env.WHATSAPP_GATEWAY_URL.replace(/\\/+$/, '')
+  const base = env.WHATSAPP_GATEWAY_URL.replace(/\/+$/, '')
   const response = await fetch(`${base}${pathname}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.WHATSAPP_GATEWAY_TOKEN}`, ...(init.headers ?? {}) },
