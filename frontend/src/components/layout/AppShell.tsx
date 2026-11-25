@@ -306,10 +306,10 @@ export function AppShell() {
           </div>
         </header>
 
-        <main className="mx-auto min-h-[calc(100vh-8rem)] w-full max-w-[1440px] px-4 py-5 sm:px-6 sm:py-6">
+        <main className="mx-auto min-h-[calc(100vh-8rem)] w-full max-w-[1440px] px-4 py-5 pb-6 sm:px-6 sm:py-6 lg:pb-6">
           <Outlet />
         </main>
-        <div className="mx-auto w-full max-w-[1440px]">
+        <div className="mx-auto w-full max-w-[1440px] pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-0">
           <Footer />
         </div>
       </div>
