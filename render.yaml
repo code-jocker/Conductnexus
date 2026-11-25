@@ -15,6 +15,9 @@ services:
         value: 22.12.0
       - key: NODE_ENV
         value: production
+      # Render sits behind one trusted proxy; use the real client IP for API limits.
+      - key: TRUST_PROXY
+        value: "1"
       - key: APP_URL
         value: https://www.conductnexus.linkpc.net
       - key: CORS_ORIGIN
@@ -108,6 +111,9 @@ services:
     envVars:
       - key: PORT
         value: "3100"
+      # Use the originating client IP instead of a shared Render proxy address.
+      - key: TRUST_PROXY
+        value: "1"
       - key: GATEWAY_TOKEN
         sync: false
       - key: SESSION_DIR
