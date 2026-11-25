@@ -1536,7 +1536,7 @@ function WhatsappTab() {
 
         <div className="mt-5 flex flex-wrap gap-2">
           {has('whatsapp.manage') && !connected && (
-            <Button icon={Smartphone} loading={connect.isPending} onClick={() => connect.mutate()}>Connect device</Button>
+            <Button icon={Smartphone} loading={connect.isPending} disabled={connect.isPending || ['initializing', 'qr', 'pairing'].includes(state)} onClick={() => connect.mutate()}>{['initializing', 'qr', 'pairing'].includes(state) ? 'Connection in progress' : 'Connect device'}</Button>
           )}
           {has('whatsapp.manage') && connected && (
             <Button variant="danger" icon={WifiOff} loading={disconnect.isPending} onClick={() => disconnect.mutate()}>Disconnect</Button>
