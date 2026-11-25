@@ -20,6 +20,7 @@ if (TOKEN.length < 24) {
 }
 
 let client = null
+let startPromise = null
 let reconnectTimer = null
 let reconnectAttempts = 0
 let shuttingDown = false
@@ -42,30 +43,32 @@ const STATUS_CACHE_TTL_MS = 5_000
 
 // ── Simple in-memory rate limiter ────────────────────────────────────────
 const RATE_LIMIT_WINDOW_MS = 60_000
-const RATE_LIMIT_MAX = 40          // requests per window per IP
-const CONNECT_RATE_LIMIT_MAX = 5   // connect attempts per window per IP
-const clients = new Map()          // ip -> { count, windowStart, connectCount }
+const READ_RATE_LIMIT_MAX = 120    // status/QR reads per minute per IP
+const CONNECT_RATE_LIMIT_MAX = 5   // connection lifecycle requests per minute per IP
+const SEND_RATE_LIMIT_MAX = 30     // outbound sends per minute per IP
+const clients = new Map()          // ip+scope -> { count, windowStart }
 
 function clientKey(req) {
   return req.ip || req.connection?.remoteAddress || 'unknown'
 }
 
-function rateLimit(req, connect = false) {
-  const key = clientKey(req)
+function rateLimit(req) {
+  const pathname = req.path
+  const scope = pathname === '/connect' || pathname === '/disconnect' ? 'connect' : pathname === '/send' ? 'send' : 'read'
+  const max = scope === 'connect' ? CONNECT_RATE_LIMIT_MAX : scope === 'send' ? SEND_RATE_LIMIT_MAX : READ_RATE_LIMIT_MAX
+  const key = `${clientKey(req)}:${scope}`
   const now = Date.now()
   let entry = clients.get(key)
   if (!entry || now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
-    entry = { count: 0, windowStart: now, connectCount: 0 }
+    entry = { count: 0, windowStart: now }
     clients.set(key, entry)
   }
-  const max = connect ? CONNECT_RATE_LIMIT_MAX : RATE_LIMIT_MAX
   if (entry.count >= max) {
     const retryAfter = Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW_MS - now) / 1000)
-    return { limited: true, retryAfter: Math.max(retryAfter, 1) }
+    return { limited: true, retryAfter: Math.max(retryAfter, 1), scope }
   }
   entry.count += 1
-  if (connect) entry.connectCount += 1
-  return { limited: false, retryAfter: 0 }
+  return { limited: false, retryAfter: 0, scope }
 }
 
 function cleanupRateLimit() {
@@ -159,9 +162,10 @@ function scheduleReconnect() {
   }, delay)
 }
 
-async function start(phoneNumber) {
+async function startInternal(phoneNumber) {
   if (shuttingDown) return { status: state.status, message: 'Gateway is shutting down.' }
   const pairPhone = String(phoneNumber || '').replace(/[^\d]/g, '')
+  if (phoneNumber && (pairPhone.length < 8 || pairPhone.length > 15)) return { status: 'failed', message: 'Phone number must contain 8–15 digits including country code.' }
 
   if (client) {
     if (!pairPhone || state.status === 'ready') {
@@ -230,6 +234,7 @@ async function start(phoneNumber) {
     if (!isCurrent()) return
     try {
       const qrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 224 })
+      if (!isCurrent()) return
       setState({
         status: 'qr',
         qrDataUrl,
@@ -289,19 +294,19 @@ async function start(phoneNumber) {
     scheduleReconnect()
   }
 
-  instance.on('auth_failure', async (message) => {
-    if (!isCurrent()) return
-    await retire(instance)
-    setState({ status: 'auth_failure', lastError: errorText(message) })
-    scheduleReconnect()
-  })
-
   return {
     status: 'initializing',
     message: pairPhone
       ? 'Connecting to WhatsApp. A pairing code will appear shortly.'
       : 'Connecting to WhatsApp. A QR code will appear shortly.',
   }
+}
+
+/** Serialize concurrent QR/pairing requests so only one browser owns the profile. */
+function start(phoneNumber) {
+  if (startPromise) return startPromise
+  startPromise = startInternal(phoneNumber).finally(() => { startPromise = null })
+  return startPromise
 }
 
 async function stop({ reason } = {}) {
@@ -322,28 +327,32 @@ async function stop({ reason } = {}) {
 
 const app = express()
 app.disable('x-powered-by')
+// Set exact trusted reverse-proxy hops (for example TRUST_PROXY=1 on Render).
+const trustProxy = process.env.TRUST_PROXY
+if (trustProxy === 'true') app.set('trust proxy', true)
+else if (trustProxy && Number.isInteger(Number(trustProxy)) && Number(trustProxy) >= 0) app.set('trust proxy', Number(trustProxy))
 app.use(express.json({ limit: '1mb' }))
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, status: state.status })
 })
 
+// Authenticate before consuming the gateway client's quota. /health is public.
 app.use((req, res, next) => {
-  const limited = rateLimit(req)
-  if (limited.limited) {
-    res.set('Retry-After', String(limited.retryAfter))
-    return res.status(429).json({ ok: false, error: 'Too many requests', retryAfter: limited.retryAfter })
-  }
-  next()
-})
-
-app.use((req, res, next) => {
+  if (req.path === '/health') return next()
   const header = req.headers.authorization || ''
   const bearer = header.startsWith('Bearer ') ? header.slice(7) : ''
   const supplied = bearer || req.headers['x-gateway-token']
-  if (supplied !== TOKEN) {
-    res.status(401).json({ ok: false, error: 'Unauthorized' })
-    return
+  if (supplied !== TOKEN) return res.status(401).json({ ok: false, error: 'Unauthorized' })
+  next()
+})
+app.use((req, res, next) => {
+  if (req.path === '/health') return next()
+  const limited = rateLimit(req)
+  if (limited.limited) {
+    res.set('Retry-After', String(limited.retryAfter))
+    res.set('RateLimit-Limit', String(limited.scope === 'connect' ? CONNECT_RATE_LIMIT_MAX : limited.scope === 'send' ? SEND_RATE_LIMIT_MAX : READ_RATE_LIMIT_MAX))
+    return res.status(429).json({ ok: false, error: 'Too many requests', retryAfter: limited.retryAfter, scope: limited.scope })
   }
   next()
 })
