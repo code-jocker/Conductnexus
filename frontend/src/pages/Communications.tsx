@@ -1445,26 +1445,23 @@ function WhatsappTab() {
   const [pairPhone, setPairPhone] = useState('')
   const [pairError, setPairError] = useState('')
 
+  // One status request supplies state, QR and pairing code. This avoids
+  // polling /status and /qr independently and cuts gateway read traffic.
   const { data: status } = useQuery({
     queryKey: ['whatsapp-status'],
     queryFn: () => get<{ status: string; enabled: boolean; settingsEnabled?: boolean; qrDataUrl?: string; pairingCode?: string; pairingPhone?: string; lastConnectedAt?: string; lastError?: string; info?: { pushname?: string; number?: string } }>('/whatsapp/status'),
-    refetchInterval: (query) => (query.state.data?.status === 'ready' ? 30_000 : 5_000),
-    retry: (failureCount, error) => {
-      // Back off on rate limiting instead of hammering the gateway.
-      const err = error as { response?: { status?: number } } | null
-      if (err?.response?.status === 429) return false
-      return failureCount < 3
+    staleTime: 1_000,
+    refetchInterval: (query) => {
+      const current = query.state.data?.status
+      if (current === 'ready') return 30_000
+      if (current === 'qr' || current === 'pairing') return 10_000
+      if (current === 'initializing') return 2_500
+      return 8_000
     },
-  })
-
-  const { data: qr } = useQuery({
-    queryKey: ['whatsapp-qr'],
-    queryFn: () => get<{ status: string; qrDataUrl: string | null; enabled: boolean; lastError?: string }>('/whatsapp/qr'),
-    refetchInterval: (query) => (query.state.data?.status === 'qr' ? 5_000 : 15_000),
     retry: (failureCount, error) => {
       const err = error as { response?: { status?: number } } | null
       if (err?.response?.status === 429) return false
-      return failureCount < 3
+      return failureCount < 2
     },
   })
 
@@ -1473,7 +1470,6 @@ function WhatsappTab() {
     onSuccess: (_result, phone) => {
       success(phone ? 'Pairing requested. The code will appear here in a few seconds.' : 'WhatsApp is starting. Scan the QR code with the school phone.')
       queryClient.invalidateQueries({ queryKey: ['whatsapp-status'] })
-      queryClient.invalidateQueries({ queryKey: ['whatsapp-qr'] })
     },
     onError: (err) => toastError(apiError(err)),
   })
@@ -1570,9 +1566,9 @@ function WhatsappTab() {
               </p>
               <p className="mt-2 text-xs text-slate-400">The code refreshes automatically every few minutes.</p>
             </div>
-          ) : qr?.qrDataUrl ? (
+          ) : status?.qrDataUrl ? (
             <div className="text-center">
-              <img src={qr.qrDataUrl} alt="WhatsApp QR code" className="mx-auto h-56 w-56 rounded-lg bg-white p-2" />
+              <img src={status.qrDataUrl} alt="WhatsApp QR code" className="mx-auto h-56 w-56 rounded-lg bg-white p-2" />
               <p className="mt-2 text-xs text-slate-500">This code refreshes automatically.</p>
             </div>
           ) : (
