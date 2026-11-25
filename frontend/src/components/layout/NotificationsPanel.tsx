@@ -60,7 +60,7 @@ export function NotificationsPanel({ open, onClose }: { open: boolean; onClose: 
     if (!socket) return
     const onNew = (payload: NotificationItem) => {
       setItems((list) => [{ ...payload, _id: payload._id ?? String(Date.now()) }, ...list].slice(0, 40))
-      setUnread((n) => n + 1)
+      // Unread count is managed by useUnreadCount to avoid double counting.
     }
     socket.on('notification:new', onNew)
     return () => {

@@ -1,13 +1,21 @@
 const LEGACY_KEY = 'cn_offline_drafts'
 const DB_NAME = 'conductnexus'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE = 'incident_drafts'
+
+export type OfflineEvidenceFile = {
+  name: string
+  size: number
+  type: string
+  // Data URL (base64) so evidence survives browser restarts and IndexedDB storage.
+  dataUrl: string
+}
 
 export type OfflineIncidentDraft = {
   localId: string
-  studentId: string
-  studentName: string
-  studentRef?: string
+  studentIds: string[]
+  studentNames: string[]
+  studentRefs: string[]
   offenceId: string
   offenceName: string
   description: string
@@ -18,24 +26,47 @@ export type OfflineIncidentDraft = {
   immediateAction?: string
   clientSubmissionId: string
   savedAt: string
+  evidenceFiles: OfflineEvidenceFile[]
+}
+
+type LegacyDraft = {
+  localId: string
+  studentId?: string
+  studentIds?: string[]
+  studentName?: string
+  studentNames?: string[]
+  studentRef?: string
+  studentRefs?: string[]
+  offenceId: string
+  offenceName: string
+  description: string
+  occurredAt: string
+  location: string
+  safeguarding?: boolean
+  witnesses?: { name: string; contact?: string; statement?: string }[]
+  immediateAction?: string
+  clientSubmissionId: string
+  savedAt: string
+  evidenceFiles?: OfflineEvidenceFile[]
 }
 
 function notify() {
   window.dispatchEvent(new Event('cn-offline-drafts'))
 }
 
-function readLegacy(): OfflineIncidentDraft[] {
+function readLegacy(): LegacyDraft[] {
   try {
     const raw = localStorage.getItem(LEGACY_KEY)
     if (!raw) return []
-    const parsed = JSON.parse(raw) as OfflineIncidentDraft[]
-    return Array.isArray(parsed) ? parsed.filter((draft) => draft && typeof draft.localId === 'string') : []
+    const parsed = JSON.parse(raw) as LegacyDraft[]
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((draft): draft is LegacyDraft => draft && typeof draft.localId === 'string')
   } catch {
     return []
   }
 }
 
-function writeLegacy(drafts: OfflineIncidentDraft[]) {
+function writeLegacy(drafts: LegacyDraft[]) {
   try {
     localStorage.setItem(LEGACY_KEY, JSON.stringify(drafts))
   } catch {
@@ -80,8 +111,28 @@ function run<T>(db: IDBDatabase, mode: IDBTransactionMode, action: (store: IDBOb
   })
 }
 
-function sortDrafts(drafts: OfflineIncidentDraft[]): OfflineIncidentDraft[] {
+function sortDrafts(drafts: LegacyDraft[]): LegacyDraft[] {
   return drafts.sort((a, b) => (a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0))
+}
+
+function normalizeLegacy(draft: LegacyDraft): OfflineIncidentDraft {
+  return {
+    localId: draft.localId,
+    studentIds: draft.studentIds ?? (draft.studentId ? [draft.studentId] : []),
+    studentNames: draft.studentNames ?? (draft.studentName ? [draft.studentName] : []),
+    studentRefs: draft.studentRefs ?? (draft.studentRef ? [draft.studentRef] : []),
+    offenceId: draft.offenceId,
+    offenceName: draft.offenceName,
+    description: draft.description,
+    occurredAt: draft.occurredAt,
+    location: draft.location,
+    safeguarding: draft.safeguarding,
+    witnesses: draft.witnesses,
+    immediateAction: draft.immediateAction,
+    clientSubmissionId: draft.clientSubmissionId,
+    savedAt: draft.savedAt,
+    evidenceFiles: draft.evidenceFiles ?? [],
+  }
 }
 
 let ready: Promise<void> | null = null
@@ -97,7 +148,25 @@ async function prepare(): Promise<IDBDatabase | null> {
       const known = new Set(existing.map((draft) => draft.localId))
       for (const draft of legacy) {
         if (!known.has(draft.localId)) {
-          await run(db, 'readwrite', (store) => store.put(draft))
+          // Normalize legacy single-student drafts to the multi-student shape.
+          const normalized: OfflineIncidentDraft = {
+            localId: draft.localId,
+            studentIds: draft.studentIds ?? (draft.studentId ? [draft.studentId] : []),
+            studentNames: draft.studentNames ?? (draft.studentName ? [draft.studentName] : []),
+            studentRefs: draft.studentRefs ?? (draft.studentRef ? [draft.studentRef] : []),
+            offenceId: draft.offenceId,
+            offenceName: draft.offenceName,
+            description: draft.description,
+            occurredAt: draft.occurredAt,
+            location: draft.location,
+            safeguarding: draft.safeguarding,
+            witnesses: draft.witnesses,
+            immediateAction: draft.immediateAction,
+            clientSubmissionId: draft.clientSubmissionId,
+            savedAt: draft.savedAt,
+            evidenceFiles: draft.evidenceFiles ?? [],
+          }
+          await run(db, 'readwrite', (store) => store.put(normalized))
         }
       }
       try {
@@ -113,12 +182,12 @@ async function prepare(): Promise<IDBDatabase | null> {
 
 export async function listOfflineDrafts(): Promise<OfflineIncidentDraft[]> {
   const db = await prepare()
-  if (!db) return sortDrafts(readLegacy())
+  if (!db) return sortDrafts(readLegacy()).map(normalizeLegacy)
   try {
     const drafts = await run<OfflineIncidentDraft[]>(db, 'readonly', (store) => store.getAll())
-    return sortDrafts(drafts)
+    return sortDrafts(drafts).map(normalizeLegacy)
   } catch {
-    return sortDrafts(readLegacy())
+    return sortDrafts(readLegacy()).map(normalizeLegacy)
   }
 }
 
@@ -169,4 +238,32 @@ export async function clearOfflineDrafts(): Promise<void> {
 
 export function newLocalId() {
   return `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * Converts a File to a base64 Data URL for IndexedDB storage.
+ * Files cannot be stored directly; Data URLs preserve name, type, and bytes.
+ */
+export function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
+}
+
+/**
+ * Converts a base64 Data URL back into a File object for re-upload.
+ */
+export function dataUrlToFile(dataUrl: string, fileName?: string): File {
+  const arr = dataUrl.split(',')
+  const mime = arr[0].match(/:(.*?);/)?.[1] ?? 'application/octet-stream'
+  const bstr = atob(arr[1])
+  let n = bstr.length
+  const u8arr = new Uint8Array(n)
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n)
+  }
+  return new File([u8arr], fileName ?? 'evidence.bin', { type: mime })
 }

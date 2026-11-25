@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ArrowRight, Check, Download, LayoutGrid, Pencil, Plus, RotateCcw, Table2, Trash2, Upload, UserRound, Users, GraduationCap, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Download, LayoutGrid, List, Pencil, Plus, RotateCcw, Table2, Trash2, Upload, UserRound, Users, GraduationCap, X } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { apiError, del, downloadFile, getPage, post } from '../lib/api'
 import { ImportStudents } from '../components/ImportStudents'
@@ -116,10 +116,19 @@ export function StudentsPage() {
   const [deleteReason, setDeleteReason] = useState('')
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [view, setView] = useState<'table' | 'cards'>(() => {
-    if (typeof window === 'undefined') return 'table'
-    return window.innerWidth < 768 ? 'cards' : 'table'
-  })
+  const [view, setView] = useState<'table' | 'cards'>('table')
+  const [filtersOpen, setFiltersOpen] = useState(typeof window === 'undefined' || window.innerWidth >= 768)
+
+  useEffect(() => {
+    const handleResize = () => {
+      const next = window.innerWidth < 768 ? 'cards' : 'table'
+      setView((current) => (current === next ? current : next))
+      setFiltersOpen(window.innerWidth >= 768)
+    }
+    handleResize()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   const { data, isLoading } = useQuery({
     queryKey: ['students', search, classId, risk, status, gender, boardingStatus, sort, sortDir, includeArchived, page, pageSize],
@@ -349,7 +358,18 @@ export function StudentsPage() {
       />
 
       <Card className="p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="flex items-center justify-between lg:hidden">
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((v) => !v)}
+            className="flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-brand-600 dark:text-slate-300 dark:hover:text-brand-400"
+          >
+            <List className={`h-4 w-4 ${filtersOpen ? 'rotate-180' : ''}`} />
+            {filtersOpen ? 'Hide filters' : 'Show filters'}
+          </button>
+        </div>
+        {!filtersOpen && typeof window !== 'undefined' && window.innerWidth < 768 ? null : (
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <SearchInput value={q} onChange={(v) => { setQ(v); setPage(1) }} placeholder="Search name, student ID, admission number or national ID…" className="flex-1" />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             <Select value={classId} onChange={(e) => { setClassId(e.target.value); setPage(1) }}>
@@ -403,6 +423,7 @@ export function StudentsPage() {
             </button>
           </div>
         </div>
+        )}
       </Card>
 
       <Card>

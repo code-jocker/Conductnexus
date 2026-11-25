@@ -136,6 +136,8 @@ export function AppShell() {
   const location = useLocation()
   const navigate = useNavigate()
   const userMenuRef = useRef<HTMLDivElement>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
 
   const isParent = me?.roles.includes('PARENT') && !me?.roles.some((r) => ['ADMIN', 'HEADTEACHER', 'TEACHER', 'DEPUTY_DISCIPLINE'].includes(r))
 
@@ -151,6 +153,30 @@ export function AppShell() {
     document.addEventListener('mousedown', onClick)
     return () => document.removeEventListener('mousedown', onClick)
   }, [])
+
+  useEffect(() => {
+    if (!mobileOpen) return
+    // Capture the element that had focus before the drawer opened.
+    previousFocusRef.current = document.activeElement as HTMLElement
+    document.body.style.overflow = 'hidden'
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+
+    // Move focus into the drawer.
+    const focusable = drawerRef.current?.querySelector<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+    focusable?.focus()
+
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+      // Restore focus to the element that had it before the drawer opened.
+      previousFocusRef.current?.focus()
+      previousFocusRef.current = null
+    }
+  }, [mobileOpen])
 
   const groups = useMemo(() => {
     if (isParent) {
@@ -228,7 +254,9 @@ export function AppShell() {
       {mobileOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-navy-950/60 backdrop-blur-sm" onClick={() => setMobileOpen(false)} aria-hidden="true" />
-          <div className="absolute inset-y-0 left-0 w-[280px] shadow-lift">{sidebar}</div>
+          <div ref={drawerRef} className="absolute inset-y-0 left-0 w-[280px] shadow-lift" aria-modal="true" role="dialog" aria-label="Main navigation">
+            {sidebar}
+          </div>
         </div>
       ) : null}
 
