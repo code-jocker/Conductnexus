@@ -10,6 +10,7 @@ import { AccessLog, AuditLog, BackupRecord, DataBreach, DataRequest, SyncLog } f
 import { nextRef } from '../shared/refs.js'
 import { writeAudit } from '../services/audit.service.js'
 import { backupFile, cleanupOldBackups, restoreTest, runBackup } from '../services/backup.service.js'
+import { refreshCommsSettings } from '../services/communication.service.js'
 import { ledgerHealth, pendingQueueFailures, recentErrors, systemSnapshot } from '../services/monitoring.service.js'
 import { actorOf, idOf, objectId, searchRegex } from './helpers.js'
 
@@ -133,6 +134,7 @@ adminRouter.patch(
       }
     }
     await settings.save()
+    await refreshCommsSettings()
     await writeAudit({
       req,
       actor: actorOf(req),
