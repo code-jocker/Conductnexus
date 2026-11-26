@@ -1,5 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import http from 'node:http'
+
+const { getSettingsMock } = vi.hoisted(() => ({ getSettingsMock: vi.fn() }))
+vi.mock('../models/core.js', () => ({ getSettings: getSettingsMock }))
 
 // Set before importing the service so env.ts picks up gateway mode.
 const PORT = 3999
@@ -14,6 +17,7 @@ const received: { authorization?: string; body: Record<string, unknown> }[] = []
 let failNext = false
 
 beforeAll(async () => {
+  getSettingsMock.mockResolvedValue({ comms: { whatsappEnabled: true } })
   server = http.createServer((req, res) => {
     const chunks: Buffer[] = []
     req.on('data', (chunk) => chunks.push(chunk))
@@ -63,5 +67,15 @@ describe('WhatsApp gateway mode', () => {
     expect(delivery.enabled).toBe(true)
     expect(delivery.ready).toBe(false)
     expect(delivery.reason).not.toContain('WhatsApp is disabled')
+  })
+
+  it('reuses cached settings while polling gateway status', async () => {
+    await service.refreshCommsSettings()
+    getSettingsMock.mockClear()
+
+    await service.whatsappStatus()
+    await service.whatsappStatus()
+
+    expect(getSettingsMock).not.toHaveBeenCalled()
   })
 })

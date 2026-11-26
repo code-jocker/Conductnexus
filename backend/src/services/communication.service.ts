@@ -106,6 +106,11 @@ function getSettingsSync() {
 }
 export async function refreshCommsSettings() {
   cachedSettings = await getSettings()
+  return cachedSettings
+}
+
+async function currentCommsSettings() {
+  return cachedSettings ?? await refreshCommsSettings()
 }
 
 function quietHoursNextAttempt(): Date {
@@ -629,7 +634,7 @@ export async function stopWhatsapp() {
 
 export async function whatsappStatus() {
   if (whatsappGatewayConfigured) {
-    const settings = await getSettings()
+    const settings = await currentCommsSettings()
     const snapshot = await refreshGatewaySnapshot()
     const status = snapshot?.status ?? (gatewayError ? 'gateway_unavailable' : 'disconnected')
     return {
