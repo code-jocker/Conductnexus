@@ -262,7 +262,7 @@ function NotificationsTab() {
         />
 
         {isLoading ? (
-          <LoadingBlock label="Loading notificationsâ€¦" />
+          <LoadingBlock label="Loading notifications…" />
         ) : rows.length ? (
           <>
             <ul className="divide-y divide-line dark:divide-[#1f2f49]">
@@ -275,7 +275,7 @@ function NotificationsTab() {
                     <div>
                       <p className="text-sm font-semibold text-slate-900 dark:text-white">{item.title}</p>
                       <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">{item.message}</p>
-                      <p className="mt-1 text-[11px] text-slate-400">{timeAgo(item.createdAt)} Â· {titleCase(item.type)}</p>
+                      <p className="mt-1 text-[11px] text-slate-400">{timeAgo(item.createdAt)} · {titleCase(item.type)}</p>
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2 pl-12 sm:pl-0">
@@ -355,7 +355,7 @@ function LettersTab() {
   return (
     <div className="space-y-4">
       <Card className="flex flex-wrap items-center gap-2 p-4">
-        <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} placeholder="Search reference, subject or studentâ€¦" className="sm:w-72" />
+        <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} placeholder="Search reference, subject or student…" className="sm:w-72" />
         <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} className="sm:w-48">
           <option value="">All statuses</option>
           <option value="draft">Draft</option>
@@ -374,7 +374,7 @@ function LettersTab() {
       </Card>
 
       {isLoading ? (
-        <LoadingBlock label="Loading lettersâ€¦" />
+        <LoadingBlock label="Loading letters…" />
       ) : letters.length ? (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -396,8 +396,8 @@ function LettersTab() {
                   <tr key={letter._id} className="hover:bg-slate-50/60 dark:hover:bg-white/[0.02]">
                     <td className="px-4 py-3 font-mono text-xs text-slate-500">{letter.reference}</td>
                     <td className="px-4 py-3">
-                      <p className="font-medium">{letter.studentSnapshot?.fullName ?? 'â€”'}</p>
-                      <p className="text-xs text-slate-400">{letter.studentSnapshot?.studentId} Â· {letter.studentSnapshot?.className}</p>
+                      <p className="font-medium">{letter.studentSnapshot?.fullName ?? '—'}</p>
+                      <p className="text-xs text-slate-400">{letter.studentSnapshot?.studentId} · {letter.studentSnapshot?.className}</p>
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{titleCase(letter.type)}</td>
                     <td className="max-w-[240px] truncate px-4 py-3">{letter.subject}</td>
@@ -430,7 +430,7 @@ function LettersTab() {
         open={Boolean(selectedId)}
         onClose={() => setSelectedId(null)}
         title={detail?.subject ?? 'Letter'}
-        subtitle={detail ? `${detail.reference} Â· ${titleCase(detail.type)}` : undefined}
+        subtitle={detail ? `${detail.reference} · ${titleCase(detail.type)}` : undefined}
         size="lg"
         footer={
           detail && (
@@ -466,7 +466,7 @@ function LettersTab() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <p className="text-[11px] uppercase tracking-wider text-slate-400">Student</p>
-                <p className="mt-0.5">{detail.studentSnapshot?.fullName} Â· {detail.studentSnapshot?.className}</p>
+                <p className="mt-0.5">{detail.studentSnapshot?.fullName} · {detail.studentSnapshot?.className}</p>
               </div>
               <div>
                 <p className="text-[11px] uppercase tracking-wider text-slate-400">Prepared by</p>
@@ -478,7 +478,7 @@ function LettersTab() {
               </div>
               <div>
                 <p className="text-[11px] uppercase tracking-wider text-slate-400">Issued</p>
-                <p className="mt-0.5">{detail.issuedAt ? formatDateTime(detail.issuedAt) : 'â€”'}</p>
+                <p className="mt-0.5">{detail.issuedAt ? formatDateTime(detail.issuedAt) : '—'}</p>
               </div>
             </div>
             {detail.rejectionReason && <Alert tone="danger" title="Rejected">{detail.rejectionReason}</Alert>}
@@ -495,7 +495,7 @@ function LettersTab() {
                 <ul className="mt-2 space-y-1.5">
                   {detail.history.map((h, i) => (
                     <li key={i} className="flex items-baseline justify-between gap-3 text-xs">
-                      <span className="text-slate-600 dark:text-slate-300">{titleCase(h.action)}{h.note ? ` â€” ${h.note}` : ''}</span>
+                      <span className="text-slate-600 dark:text-slate-300">{titleCase(h.action)}{h.note ? ` — ${h.note}` : ''}</span>
                       <span className="shrink-0 text-slate-400">{formatDateTime(h.at)}</span>
                     </li>
                   ))}
@@ -581,7 +581,7 @@ function CreateLetterModal({ open, onClose, onCreated }: { open: boolean; onClos
           <Input
             value={form.subject}
             onChange={(e) => setForm({ ...form, subject: e.target.value })}
-            placeholder={template?.subject ? `Template: ${template.subject}` : 'e.g. Official warning â€” repeated lateness'}
+            placeholder={template?.subject ? `Template: ${template.subject}` : 'e.g. Official warning — repeated lateness'}
           />
         </Field>
         <Field
@@ -589,7 +589,7 @@ function CreateLetterModal({ open, onClose, onCreated }: { open: boolean; onClos
           required={!form.templateId}
           hint={form.templateId ? 'Leave blank to use the selected template, or write your own body.' : 'Use {{studentName}}, {{balance}} and other placeholders where helpful.'}
         >
-          <Textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="min-h-[180px]" placeholder="Dear Parent/Guardian, â€¦" />
+          <Textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="min-h-[180px]" placeholder="Dear Parent/Guardian, …" />
         </Field>
         <Alert tone="info">
           Letters are reviewed by a headteacher or deputy before issue. Once approved, a signed PDF becomes available.
@@ -626,7 +626,7 @@ function QueueTab() {
   const process = useMutation({
     mutationFn: () => post<{ processed: number; sent: number; failed: number }>('/notifications/queue/process'),
     onSuccess: (result) => {
-      success(`Queue processed â€” ${result.sent} sent, ${result.failed} failed of ${result.processed}`)
+      success(`Queue processed — ${result.sent} sent, ${result.failed} failed of ${result.processed}`)
       queryClient.invalidateQueries({ queryKey: ['queue'] })
       queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
     },
@@ -657,7 +657,7 @@ function QueueTab() {
   const purge = useMutation({
     mutationFn: () => post<{ purged: number; byChannel: Record<string, number> }>('/notifications/queue/purge-non-whatsapp'),
     onSuccess: (result) => {
-      success(`${result.purged} failed SMS/email message(s) removed â€” parent messaging is WhatsApp only`)
+      success(`${result.purged} failed SMS/email message(s) removed — parent messaging is WhatsApp only`)
       queryClient.invalidateQueries({ queryKey: ['queue'] })
       queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
     },
@@ -764,7 +764,7 @@ function QueueTab() {
       </Card>
 
       {isLoading ? (
-        <LoadingBlock label="Loading message queueâ€¦" />
+        <LoadingBlock label="Loading message queue…" />
       ) : rows.length ? (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -787,12 +787,12 @@ function QueueTab() {
                     <td className="px-4 py-3">
                       <p className="font-medium">{typeof row.parentId === 'object' ? row.parentId?.name ?? row.to : row.to}</p>
                       <p className="text-xs text-slate-400">
-                        {typeof row.studentId === 'object' && row.studentId?.fullName ? `${row.studentId.fullName} Â· ` : ''}{row.to}
+                        {typeof row.studentId === 'object' && row.studentId?.fullName ? `${row.studentId.fullName} · ` : ''}{row.to}
                       </p>
                       {row.lastError && <p className="mt-1 max-w-[260px] text-xs text-red-600 dark:text-red-400">{row.lastError}</p>}
                     </td>
                     <td className="px-4 py-3"><Badge tone="brand">{titleCase(row.channel)}</Badge></td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{row.templateKey ?? 'â€”'}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{row.templateKey ?? '—'}</td>
                     <td className="px-4 py-3"><StatusBadge status={row.status} /></td>
                     <td className="px-4 py-3">
                       {row.channel === 'whatsapp' && row.ackStatus ? (
@@ -900,7 +900,7 @@ function TemplatesTab() {
           <CardHeader
             icon={Bell}
             title="Notification templates"
-            subtitle={`${notifications.length} of ${templates?.length ?? 0} Â· WhatsApp and in-app`}
+            subtitle={`${notifications.length} of ${templates?.length ?? 0} · WhatsApp and in-app`}
             actions={has('templates.manage') && <Button size="sm" icon={Plus} onClick={() => setTemplateModal('new')}>New</Button>}
           />
           {!has('notifications.manage') ? (
@@ -938,7 +938,7 @@ function TemplatesTab() {
           <CardHeader
             icon={FileText}
             title="Official letter templates"
-            subtitle={`${letters.length} of ${letterTemplates?.length ?? 0} Â· bilingual A4 letters`}
+            subtitle={`${letters.length} of ${letterTemplates?.length ?? 0} · bilingual A4 letters`}
             actions={has('templates.manage') && <Button size="sm" icon={Plus} onClick={() => setLetterTemplateModal('new')}>New</Button>}
           />
           {!has('letters.view') ? (
@@ -1493,7 +1493,7 @@ function WhatsappTab() {
     e.preventDefault()
     const digits = pairPhone.replace(/[^\d]/g, '')
     if (!/^\d{8,15}$/.test(digits)) {
-      setPairError('Enter the number with its country code, digits only â€” for example 2507XXXXXXXX.')
+      setPairError('Enter the number with its country code, digits only — for example 2507XXXXXXXX.')
       return
     }
     setPairError('')
@@ -1517,12 +1517,19 @@ function WhatsappTab() {
         </div>
 
         <dl className="mt-4 space-y-2 text-sm">
-          <div className="flex justify-between gap-3"><dt className="text-slate-500">Account</dt><dd>{status?.info?.pushname ?? 'â€”'}</dd></div>
-          <div className="flex justify-between gap-3"><dt className="text-slate-500">Number</dt><dd>{status?.info?.number ?? 'â€”'}</dd></div>
-          <div className="flex justify-between gap-3"><dt className="text-slate-500">Last connected</dt><dd>{status?.lastConnectedAt ? formatDateTime(status.lastConnectedAt) : 'â€”'}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-slate-500">Account</dt><dd>{status?.info?.pushname ?? '—'}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-slate-500">Number</dt><dd>{status?.info?.number ?? '—'}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-slate-500">Last connected</dt><dd>{status?.lastConnectedAt ? formatDateTime(status.lastConnectedAt) : '—'}</dd></div>
         </dl>
 
-        {status?.lastError && <div className="mt-3"><Alert tone="danger" title="Last error">{status.lastError}</Alert></div>}
+        {status?.lastError && <div className="mt-3"><Alert tone="danger" title={state === 'failed' ? 'Connection failed' : 'Last error'}>{status.lastError}</Alert></div>}
+        {state === 'failed' && !status?.lastError && (
+          <div className="mt-3">
+            <Alert tone="warning" title="WhatsApp is not connected">
+              The previous connection attempt failed. Retry the connection to request a fresh QR code or pairing code.
+            </Alert>
+          </div>
+        )}
 
         {status && !status.enabled && (
           <div className="mt-4">
@@ -1536,7 +1543,7 @@ function WhatsappTab() {
 
         <div className="mt-5 flex flex-wrap gap-2">
           {has('whatsapp.manage') && !connected && (
-            <Button icon={Smartphone} loading={connect.isPending} disabled={connect.isPending || ['initializing', 'qr', 'pairing'].includes(state)} onClick={() => connect.mutate()}>{['initializing', 'qr', 'pairing'].includes(state) ? 'Connection in progress' : 'Connect device'}</Button>
+            <Button icon={Smartphone} loading={connect.isPending} disabled={connect.isPending || ['initializing', 'qr', 'pairing'].includes(state)} onClick={() => connect.mutate()}>{['initializing', 'qr', 'pairing'].includes(state) ? 'Connection in progress' : ['failed', 'disconnected', 'gateway_unavailable'].includes(state) ? 'Retry connection' : 'Connect device'}</Button>
           )}
           {has('whatsapp.manage') && connected && (
             <Button variant="danger" icon={WifiOff} loading={disconnect.isPending} onClick={() => disconnect.mutate()}>Disconnect</Button>
@@ -1547,7 +1554,7 @@ function WhatsappTab() {
       <Card className="p-5">
         <div className="flex items-center gap-2 text-sm font-semibold"><QrCode className="h-4 w-4" /> Link a device</div>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-          Open WhatsApp on the school phone â†’ Linked devices â†’ Link a device, then scan this code. No camera? Use a pairing code. The session is stored on the server.
+          Open WhatsApp on the school phone → Linked devices → Link a device, then scan this code. No camera? Use a pairing code. The session is stored on the server.
         </p>
         <div className="mt-4 flex min-h-[240px] items-center justify-center rounded-xl border border-dashed border-line bg-slate-50 p-4 dark:border-[#2a3b55] dark:bg-white/[0.02]">
           {connected ? (
@@ -1561,7 +1568,7 @@ function WhatsappTab() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Pairing code</p>
               <p className="mt-2 select-all text-4xl font-bold tracking-[0.25em] text-slate-900 dark:text-white">{displayCode}</p>
               <p className="mt-3 max-w-xs text-xs text-slate-500">
-                On the phone: WhatsApp â†’ Linked devices â†’ Link a device â†’ <span className="font-semibold">Link with phone number instead</span>, then enter this code.
+                On the phone: WhatsApp → Linked devices → Link a device → <span className="font-semibold">Link with phone number instead</span>, then enter this code.
               </p>
               <p className="mt-2 text-xs text-slate-400">The code refreshes automatically every few minutes.</p>
             </div>
@@ -1573,7 +1580,7 @@ function WhatsappTab() {
           ) : (
             <div className="text-center text-sm text-slate-500">
               <QrCode className="mx-auto h-10 w-10 text-slate-300" />
-              <p className="mt-2">No QR code yet. Press â€œConnect deviceâ€ to start the session.</p>
+              <p className="mt-2">No QR code yet. Press “Connect device” to start the session.</p>
             </div>
           )}
         </div>
@@ -1582,7 +1589,7 @@ function WhatsappTab() {
           <div className="mt-4 rounded-xl border border-line p-3 dark:border-[#2a3b55]">
             {pairOpen ? (
               <form onSubmit={requestPairingCode} className="space-y-3">
-                <Field label="WhatsApp number (with country code)" hint="Digits only, no + or spaces â€” for example 250788123456.">
+                <Field label="WhatsApp number (with country code)" hint="Digits only, no + or spaces — for example 250788123456.">
                   <Input
                     value={pairPhone}
                     onChange={(e) => setPairPhone(e.target.value)}
